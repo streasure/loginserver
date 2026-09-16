@@ -48,7 +48,8 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	go.elastic.co/apm/module/apmgin/v2 v2.4.3 // indirect
-	go.elastic.co/apm/module/apmhttp/v2 v2.4.3 // indirect
+	go.elastic.co/apm/module/apmgrpc/v2 v2.6.2 // indirect
+	go.elastic.co/apm/module/apmhttp/v2 v2.6.2 // indirect
 	go.elastic.co/apm/v2 v2.6.2 // indirect
 	go.elastic.co/fastjson v1.2.0 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.18 // indirect
