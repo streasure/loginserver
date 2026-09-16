@@ -5,15 +5,17 @@ import (
 )
 
 type Config struct {
-	Belong     string         `yaml:"belong"`
-	ServerType string         `yaml:"serverType"`
-	Zone       string         `yaml:"zone"`
-	ServerId   string         `yaml:"serverId"`
-	Ports      Ports          `yaml:"ports"`
-	Redis      RedisInfo      `yaml:"redis"`
-	Etcd       EtcdInfo       `yaml:"etcd"`
-	Limits     LimitInfo      `yaml:"limits"`
-	ServerList ServerListInfo `yaml:"serverList"`
+	Belong               string         `yaml:"belong"`
+	ServerType           string         `yaml:"serverType"`
+	Zone                 string         `yaml:"zone"`
+	ServerId             string         `yaml:"serverId"`
+	Ports                Ports          `yaml:"ports"`
+	Redis                RedisInfo      `yaml:"redis"`
+	Etcd                 EtcdInfo       `yaml:"etcd"`
+	Limits               LimitInfo      `yaml:"limits"`
+	ServerList           ServerListInfo `yaml:"serverList"`
+	RedisReadTimeoutSec  int64          `yaml:"RedisReadTimeoutSec"`
+	RedisWriteTimeoutSec int64          `yaml:"RedisWriteTimeoutSec"`
 }
 
 type Ports struct {

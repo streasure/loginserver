@@ -1,20 +1,20 @@
 package component
 
 import (
-	ucomponent "github.com/streasure/util/component"
-	"github.com/streasure/util/uetcd"
 	"loginserver/internal/config"
+
+	"github.com/streasure/util/uetcd"
 )
 
-func AddEtcd(container *ucomponent.Container) {
+func NewEtcdComponent() *uetcd.Component {
 	cfg := config.GetConfig()
 	endpoints := cfg.Etcd.Endpoints
-	if len(endpoints) == 0 && cfg.Etcd.Endpoint != "" {
+	if len(endpoints) == 0 && len(cfg.Etcd.Endpoint) > 0 {
 		endpoints = []string{cfg.Etcd.Endpoint}
 	}
 
 	serviceID := cfg.Belong + "/" + cfg.ServerType + ":" + cfg.Zone
-	container.Add(uetcd.New(uetcd.ComponentConfig{
+	return uetcd.New(uetcd.ComponentConfig{
 		Etcd: uetcd.Config{
 			Endpoints:     endpoints,
 			ServicePrefix: cfg.Etcd.ServicePrefix,
@@ -28,5 +28,5 @@ func AddEtcd(container *ucomponent.Container) {
 		Discovery: uetcd.DiscoveryConfig{
 			ServiceID: serviceID,
 		},
-	}))
+	})
 }

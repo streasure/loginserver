@@ -48,16 +48,14 @@ func main() {
 	container := component.NewContainer()
 
 	// 初始化基础组件 (Redis, Etcd)
-	internalcomponent.AddRedis(container)
-	internalcomponent.AddEtcd(container)
+	container.Add(internalcomponent.NewRedisComponent())
+	container.Add(internalcomponent.NewEtcdComponent())
 
 	// gRPC 业务组件
-	grpcServer := rpc.NewLoginGrpcServer(conf)
-	container.Add(grpcServer)
+	container.Add(rpc.NewLoginGrpcServer(conf))
 
 	// HTTP 业务组件
-	ginManager := ugin.NewComponent(conf.Belong, conf.Ports.HttpAddr)
-	container.Add(ginManager)
+	container.Add(ugin.NewComponent(conf.Belong, conf.Ports.HttpAddr))
 
 	tlog.Info("loginserver starting",
 		"belong", conf.Belong,

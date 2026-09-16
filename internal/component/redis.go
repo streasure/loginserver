@@ -2,26 +2,28 @@ package component
 
 import (
 	"loginserver/internal/config"
+	"time"
 
 	"github.com/redis/go-redis/v9"
-	ucomponent "github.com/streasure/util/component"
 	"github.com/streasure/util/uredis"
 )
 
-func AddRedis(container *ucomponent.Container) {
-	cfg := config.GetConfig().Redis
-	if cfg.Address == "" {
-		return
+func NewRedisComponent() *uredis.StandaloneComponent {
+	cfg := config.GetConfig()
+	if len(cfg.Redis.Address) == 0 {
+		return nil
 	}
 
-	network := cfg.Network
+	network := cfg.Redis.Network
 	if network == "" {
 		network = "tcp"
 	}
-	container.Add(uredis.NewStandaloneComponent(&redis.Options{
-		Addr:     cfg.Address,
-		Network:  network,
-		DB:       cfg.DB,
-		Password: cfg.Password,
-	}))
+	return uredis.NewStandaloneComponent(&redis.Options{
+		Addr:         cfg.Redis.Address,
+		Network:      network,
+		DB:           cfg.Redis.DB,
+		Password:     cfg.Redis.Password,
+		ReadTimeout:  time.Duration(cfg.RedisReadTimeoutSec) * time.Second,
+		WriteTimeout: time.Duration(cfg.RedisWriteTimeoutSec) * time.Second,
+	})
 }
