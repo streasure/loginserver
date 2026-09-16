@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"loginserver/internal/config"
 	"net"
 
 	"github.com/streasure/util/component"
@@ -10,9 +11,9 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
-	loginproto "github.com/streasure/protocol/loginserver"
-	"loginserver/internal"
 	"loginserver/internal/service"
+
+	loginproto "github.com/streasure/protocol/loginserver"
 )
 
 type LoginGrpcServer struct {
@@ -20,11 +21,11 @@ type LoginGrpcServer struct {
 	loginproto.UnimplementedLoginServiceServer
 	server       *grpc.Server
 	listener     net.Listener
-	config       *internal.Config
+	config       *config.Config
 	loginService *service.LoginService
 }
 
-func NewLoginGrpcServer(config *internal.Config) *LoginGrpcServer {
+func NewLoginGrpcServer(config *config.Config) *LoginGrpcServer {
 	return &LoginGrpcServer{
 		config: config,
 	}
@@ -52,16 +53,7 @@ func (s *LoginGrpcServer) Start() error {
 		return err
 	}
 
-	options := internal.InitOptions(
-		internal.WithBelong(s.config.Belong),
-		internal.WithServerType(s.config.ServerType),
-		internal.WithZone(s.config.Zone),
-		internal.WithServerId(s.config.ServerId),
-		internal.WithLoginTokenExpireSeconds(s.config.Limits.LoginTokenExpireSeconds),
-		internal.WithClientGetServerListUrl(s.config.ServerList.ClientGetServerListUrl),
-		internal.WithServerInfos(s.config.ServerList.ServerInfos),
-	)
-	s.loginService = service.NewLoginService(options)
+	s.loginService = service.NewLoginService(config.GetConfig())
 
 	s.server = grpc.NewServer(
 		grpc.MaxConcurrentStreams(1000),

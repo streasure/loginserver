@@ -3,9 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
-	"os"
-
 	"loginserver/internal"
+	internalcomponent "loginserver/internal/component"
+	"loginserver/internal/config"
 	_ "loginserver/internal/handler"
 	"loginserver/internal/rpc"
 
@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	confs      = flag.String("conf", "", "specify config file")
+	confFiles  = flag.String("conf", "", "specify config file")
 	loggerConf = flag.String("logger", "", "logger config file")
 	showVer    = flag.Bool("version", false, "show version")
 )
@@ -30,51 +30,42 @@ func main() {
 	// 初始化 tlog
 	logComp := tlog.NewLogComponent(*loggerConf)
 	if err := logComp.Init(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize tlog: %v\n", err)
+		fmt.Printf("failed to initialize tlog: %v\n", err)
 		return
 	}
 	defer logComp.Destroy()
 
 	// 加载配置
-	if err := internal.Load(*confs); err != nil {
-		tlog.Error("load config failed", "error", err.Error())
-		os.Exit(1)
+	err := config.LoadConfig(*confFiles)
+	if err != nil {
+		tlog.Error("load config failed error", err)
+		return
 	}
 
-	config := internal.GetConfig()
-	internal.InitOptions(
-		internal.WithBelong(config.Belong),
-		internal.WithServerType(config.ServerType),
-		internal.WithZone(config.Zone),
-		internal.WithServerId(config.ServerId),
-		internal.WithLoginTokenExpireSeconds(config.Limits.LoginTokenExpireSeconds),
-		internal.WithClientGetServerListUrl(config.ServerList.ClientGetServerListUrl),
-		internal.WithServerInfos(config.ServerList.ServerInfos),
-		internal.WithHttpAddr(config.Ports.HttpAddr),
-		internal.WithGrpcServiceAddr(config.Ports.GrpcServiceAddr),
-	)
+	conf := config.GetConfig()
 
 	// 创建容器
 	container := component.NewContainer()
 
 	// 初始化基础组件 (Redis, Etcd)
-	internal.InitBaseComponent(container, config)
+	internalcomponent.AddRedis(container)
+	internalcomponent.AddEtcd(container)
 
 	// gRPC 业务组件
-	grpcServer := rpc.NewLoginGrpcServer(config)
+	grpcServer := rpc.NewLoginGrpcServer(conf)
 	container.Add(grpcServer)
 
 	// HTTP 业务组件
-	ginManager := ugin.NewComponent("loginserver", config.Ports.HttpAddr)
+	ginManager := ugin.NewComponent(conf.Belong, conf.Ports.HttpAddr)
 	container.Add(ginManager)
 
 	tlog.Info("loginserver starting",
-		"belong", config.Belong,
-		"serverType", config.ServerType,
-		"zone", config.Zone,
-		"serverId", config.ServerId,
-		"httpAddr", config.Ports.HttpAddr,
-		"grpcAddr", config.Ports.GrpcServiceAddr,
+		"belong", conf.Belong,
+		"serverType", conf.ServerType,
+		"zone", conf.Zone,
+		"serverId", conf.ServerId,
+		"httpAddr", conf.Ports.HttpAddr,
+		"grpcAddr", conf.Ports.GrpcServiceAddr,
 	)
 
 	// 启动所有组件

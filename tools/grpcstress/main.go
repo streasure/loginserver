@@ -19,6 +19,8 @@ func main() {
 	target := flag.String("target", "127.0.0.1:10002", "gRPC target")
 	concurrency := flag.Int("c", 100, "concurrent workers")
 	connections := flag.Int("conn", 0, "shared connections (0 = one per worker)")
+	accountID := flag.String("account-id", "stress-account", "account ID used by the request")
+	loginToken := flag.String("login-token", "stress-token", "login token used by the request")
 	duration := flag.Duration("d", 10*time.Second, "test duration")
 	warmup := flag.Duration("warmup", 2*time.Second, "warmup duration")
 	flag.Parse()
@@ -62,8 +64,8 @@ func main() {
 			for time.Now().Before(warmupDeadline) {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				clients[connIdx].ValidateLoginToken(ctx, &loginproto.ValidateLoginTokenReq{
-					AccountId:  "warmup",
-					LoginToken: "warmup",
+					AccountId:  *accountID,
+					LoginToken: *loginToken,
 				})
 				cancel()
 			}
@@ -90,8 +92,8 @@ func main() {
 				started := time.Now()
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				_, callErr := clients[connIdx].ValidateLoginToken(ctx, &loginproto.ValidateLoginTokenReq{
-					AccountId:  "stress-account",
-					LoginToken: "stress-token",
+					AccountId:  *accountID,
+					LoginToken: *loginToken,
 				})
 				cancel()
 				lat := time.Since(started).Nanoseconds()

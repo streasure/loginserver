@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"loginserver/internal/config"
 	"net/http"
 
 	"loginserver/internal"
@@ -29,8 +30,8 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	options := internal.GetOptions()
-	loginService := service.NewLoginService(options)
+	cfg := config.GetConfig()
+	loginService := service.NewLoginService(cfg)
 
 	accountId, err := loginService.BindAccount(ctx, loginReq.OpenId, loginReq.PtId)
 	if err != nil || len(accountId) == 0 {
@@ -61,7 +62,7 @@ func Login(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.Success(dto.LoginAck{
 		AccountId:     accountId,
 		LoginToken:    loginToken,
-		ServerListUrl: options.ClientGetServerListUrl,
+		ServerListUrl: cfg.ServerList.ClientGetServerListUrl,
 	}))
 }
 
@@ -75,8 +76,7 @@ func GetServerList(c *gin.Context) {
 		return
 	}
 
-	options := internal.GetOptions()
-	loginService := service.NewLoginService(options)
+	loginService := service.NewLoginService(config.GetConfig())
 
 	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
 	if err != nil || !valid {
@@ -110,8 +110,7 @@ func ValidateLoginToken(c *gin.Context) {
 		return
 	}
 
-	options := internal.GetOptions()
-	loginService := service.NewLoginService(options)
+	loginService := service.NewLoginService(config.GetConfig())
 
 	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
 	if err != nil {

@@ -1,9 +1,7 @@
-package internal
+package config
 
 import (
-	"os"
-
-	"gopkg.in/yaml.v3"
+	"github.com/streasure/util/uconfig"
 )
 
 type Config struct {
@@ -59,25 +57,12 @@ func GetConfig() *Config {
 	return _defaultConfig
 }
 
-func Load(configFile ...string) error {
-	return loadConfigs(configFile...)
-}
-
-func loadConfigs(files ...string) error {
-	if len(files) == 0 {
-		return nil
-	}
-
-	data, err := os.ReadFile(files[0])
+func LoadConfig(configFile ...string) error {
+	cfg, err := uconfig.Load[Config](configFile...)
 	if err != nil {
 		return err
 	}
+	_defaultConfig = cfg
 
-	tmp := &Config{}
-	if err := yaml.Unmarshal(data, tmp); err != nil {
-		return err
-	}
-
-	_defaultConfig = tmp
 	return nil
 }
