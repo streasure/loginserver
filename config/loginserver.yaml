@@ -1,0 +1,37 @@
+belong: "default"
+serverType: "LoginServer"
+zone: "default"
+serverId: "loginserver-1"
+
+RedisReadTimeoutSec: 3
+RedisWriteTimeoutSec: 3
+
+ports:
+  httpAddr: ":10001"
+  grpcServiceAddr: "127.0.0.1:10002"
+
+redis:
+  address: "127.0.0.1:6379"
+  db: 1
+  network: tcp
+  password: ""
+
+etcd:
+  endpoint: "http://127.0.0.1:2379"
+  servicePrefix: "/services"
+  leaseTTL: "10s"
+
+limits:
+  loginTokenExpireSeconds: 86400
+
+serverList:
+  clientGetServerListUrl: "http://localhost:10001/api/v1/server/list"
+  serverInfos:
+    - serverId: 1
+      serverName: "测试服务器1"
+      serverUrl: "ws://127.0.0.1:8001"
+      serverStatus: 0
+    - serverId: 2
+      serverName: "测试服务器2"
+      serverUrl: "ws://127.0.0.1:8002"
+      serverStatus: 0
