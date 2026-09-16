@@ -4,24 +4,22 @@ import (
 	"context"
 	"fmt"
 	"loginserver/internal/config"
-	"net"
 
 	"github.com/streasure/util/component"
 	"github.com/streasure/util/tlog"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/health"
-	healthpb "google.golang.org/grpc/health/grpc_health_v1"
-
-	"loginserver/internal/service"
+	"github.com/streasure/util/ugrpc"
 
 	loginproto "github.com/streasure/protocol/loginserver"
+
+	"loginserver/internal/service"
 )
 
 type LoginGrpcServer struct {
 	component.BaseComponent
+
 	loginproto.UnimplementedLoginServiceServer
-	server       *grpc.Server
-	listener     net.Listener
+
+	server       *ugrpc.Server
 	config       *config.Config
 	loginService *service.LoginService
 }
@@ -37,58 +35,41 @@ func (s *LoginGrpcServer) Name() string {
 }
 
 func (s *LoginGrpcServer) Init() error {
+	port := s.config.Ports.GrpcServiceAddr
+	if port == 0 {
+		tlog.Info("grpc service addr is empty, skip grpc server init")
+		return nil
+	}
+
+	// 创建通用 gRPC 服务器，只写端口时监听所有网卡，
+	// 对外通告地址（etcd 注册用）通过 server.AdvertiseAddr() 自动拼接本机 IP
+	s.server = ugrpc.NewServer(
+		ugrpc.WithName("grpc-server"),
+		ugrpc.WithAddr(fmt.Sprintf(":%d", port)),
+		ugrpc.WithHealth(true),
+	)
+
+	// 注册业务 handler
+	loginproto.RegisterLoginServiceServer(s.server, s)
+	s.server.SetServingStatus("loginserver.LoginService", true)
+
 	return nil
 }
 
 func (s *LoginGrpcServer) Start() error {
-	port := s.config.Ports.GrpcServiceAddr
-	if port == 0 {
-		tlog.Info("grpc service addr is empty, skip grpc server start")
+	if s.server == nil {
 		return nil
-	}
-	addr := fmt.Sprintf(":%d", port)
-
-	var err error
-	s.listener, err = net.Listen("tcp", addr)
-	if err != nil {
-		tlog.Error("grpc listen failed", "addr", addr, "error", err.Error())
-		return err
 	}
 
 	s.loginService = service.NewLoginService(config.GetConfig())
 
-	s.server = grpc.NewServer(
-		grpc.MaxConcurrentStreams(1000),
-	)
-
-	loginproto.RegisterLoginServiceServer(s.server, s)
-
-	healthServer := health.NewServer()
-	healthpb.RegisterHealthServer(s.server, healthServer)
-	healthServer.SetServingStatus("loginserver.LoginService", healthpb.HealthCheckResponse_SERVING)
-
-	tlog.Info("grpc server starting", "addr", addr)
-
-	go func() {
-		if err := s.server.Serve(s.listener); err != nil {
-			tlog.Error("grpc server serve failed", "error", err.Error())
-		}
-	}()
-
-	return nil
-}
-
-func (s *LoginGrpcServer) Stop() {
-	if s.server != nil {
-		s.server.GracefulStop()
-	}
-	if s.listener != nil {
-		s.listener.Close()
-	}
+	return s.server.Start()
 }
 
 func (s *LoginGrpcServer) Destroy() {
-	s.Stop()
+	if s.server != nil {
+		s.server.Stop()
+	}
 }
 
 func (s *LoginGrpcServer) ValidateLoginToken(ctx context.Context, req *loginproto.ValidateLoginTokenReq) (*loginproto.ValidateLoginTokenAck, error) {
