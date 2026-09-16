@@ -7,8 +7,9 @@ RedisReadTimeoutSec: 3
 RedisWriteTimeoutSec: 3
 
 ports:
-  httpAddr: ":10001"
-  grpcServiceAddr: "127.0.0.1:10002"
+  httpAddr: 10001
+  grpcServiceAddr: 10002
+  pprofPort: 10003
 
 redis:
   address: "127.0.0.1:6379"

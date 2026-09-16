@@ -12,6 +12,7 @@ import (
 	"github.com/streasure/util/component"
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/ugin"
+	"github.com/streasure/util/upprof"
 )
 
 var (
@@ -55,7 +56,10 @@ func main() {
 	container.Add(rpc.NewLoginGrpcServer(conf))
 
 	// HTTP 业务组件
-	container.Add(ugin.NewComponent(conf.Belong, conf.Ports.HttpAddr))
+	container.Add(ugin.NewComponent(conf.Belong, fmt.Sprintf(":%d", conf.Ports.HttpAddr)))
+
+	// pprof
+	container.Add(upprof.NewUPprofComponent(fmt.Sprintf(":%d", conf.Ports.PprofPort)))
 
 	tlog.Info("loginserver starting",
 		"belong", conf.Belong,

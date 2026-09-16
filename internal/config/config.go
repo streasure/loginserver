@@ -19,8 +19,9 @@ type Config struct {
 }
 
 type Ports struct {
-	HttpAddr        string `yaml:"httpAddr"`
-	GrpcServiceAddr string `yaml:"grpcServiceAddr"`
+	HttpAddr        int `yaml:"httpAddr"`
+	GrpcServiceAddr int `yaml:"grpcServiceAddr"`
+	PprofPort       int `yaml:"pprofPort"`
 }
 
 type RedisInfo struct {

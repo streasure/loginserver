@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"fmt"
 	"loginserver/internal/config"
 	"net"
 
@@ -40,11 +41,12 @@ func (s *LoginGrpcServer) Init() error {
 }
 
 func (s *LoginGrpcServer) Start() error {
-	addr := s.config.Ports.GrpcServiceAddr
-	if addr == "" {
+	port := s.config.Ports.GrpcServiceAddr
+	if port == 0 {
 		tlog.Info("grpc service addr is empty, skip grpc server start")
 		return nil
 	}
+	addr := fmt.Sprintf(":%d", port)
 
 	var err error
 	s.listener, err = net.Listen("tcp", addr)
