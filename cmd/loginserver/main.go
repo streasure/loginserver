@@ -12,8 +12,8 @@ import (
 	"github.com/streasure/util/component"
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/ugin"
-	"github.com/streasure/util/upprof"
 	"github.com/streasure/util/uperf"
+	"github.com/streasure/util/upprof"
 )
 
 var (
@@ -52,12 +52,23 @@ func main() {
 	// 创建容器
 	container := component.NewContainer()
 
-	// 初始化基础组件 (Redis, Etcd)
+	// 组件启动顺序：etcd（注册中心）由 util 默认排在最后启动（Order 最大，销毁时最先注销），
+	// 其余组件按 Add 顺序——redis 需先于 rpc/ugin（业务组件初始化依赖 redis 客户端）
+
+	// redis
 	container.Add(internalcomponent.NewRedisComponent())
-	container.Add(internalcomponent.NewEtcdComponent())
 
 	// gRPC 业务组件
-	container.Add(rpc.NewLoginGrpcServer(conf))
+	rpcServer := rpc.NewLoginGrpcServer(conf)
+	container.Add(rpcServer)
+
+	// etcd（服务身份与通告地址取自 rpcServer 内的 gRPC 服务器，取不到直接报错退出）
+	etcdComp, err := internalcomponent.NewEtcdComponent(rpcServer)
+	if err != nil {
+		tlog.Error("create etcd component failed", "error", err.Error())
+		return
+	}
+	container.Add(etcdComp)
 
 	// HTTP 业务组件
 	container.Add(ugin.NewComponent(conf.Belong, fmt.Sprintf(":%d", conf.Ports.HttpAddr)))

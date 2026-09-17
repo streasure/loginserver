@@ -24,28 +24,28 @@ type LoginGrpcServer struct {
 	loginService *service.LoginService
 }
 
-func NewLoginGrpcServer(config *config.Config) *LoginGrpcServer {
-	return &LoginGrpcServer{
-		config: config,
+func NewLoginGrpcServer(cfg *config.Config) *LoginGrpcServer {
+	s := &LoginGrpcServer{
+		config: cfg,
 	}
-}
 
-func (s *LoginGrpcServer) Name() string {
-	return "grpc-server"
-}
-
-func (s *LoginGrpcServer) Init() error {
-	port := s.config.Ports.GrpcServiceAddr
-	if port == 0 {
+	// gRPC 服务端口为 0 时按配置禁用，不创建服务器
+	if cfg.Ports.GrpcServiceAddr == 0 {
 		tlog.Info("grpc service addr is empty, skip grpc server init")
-		return nil
+		return s
 	}
 
-	// 创建通用 gRPC 服务器，只写端口时监听所有网卡，
-	// 对外通告地址（etcd 注册用）通过 server.AdvertiseAddr() 自动拼接本机 IP
+	// 创建通用 gRPC 服务器：身份字段（belong/serverType/zone/serverId）供 etcd
+	// 服务注册使用（ServiceKey/ServerId）；只写端口时监听所有网卡，
+	// 对外通告地址（etcd 注册用）通过 server.AdvertiseAddr() 自动拼接本机 IP。
+	// 在构造函数创建（而非 Init），etcd 组件创建时即可读取服务身份
 	s.server = ugrpc.NewServer(
 		ugrpc.WithName("grpc-server"),
-		ugrpc.WithAddr(fmt.Sprintf(":%d", port)),
+		ugrpc.WithAddr(fmt.Sprintf(":%d", cfg.Ports.GrpcServiceAddr)),
+		ugrpc.WithBelong(cfg.Belong),
+		ugrpc.WithServerType(cfg.ServerType),
+		ugrpc.WithZone(cfg.Zone),
+		ugrpc.WithServerId(cfg.ServerId),
 		ugrpc.WithHealth(true),
 	)
 
@@ -53,7 +53,13 @@ func (s *LoginGrpcServer) Init() error {
 	loginproto.RegisterLoginServiceServer(s.server, s)
 	s.server.SetServingStatus("loginserver.LoginService", true)
 
-	return nil
+	return s
+}
+
+// GrpcServer 返回内部通用 gRPC 服务器（gRPC 服务禁用时为 nil），
+// 供 etcd 组件读取服务身份（ServiceKey/ServerId）与通告地址（AdvertiseAddr）
+func (s *LoginGrpcServer) GrpcServer() *ugrpc.Server {
+	return s.server
 }
 
 func (s *LoginGrpcServer) Start() error {
