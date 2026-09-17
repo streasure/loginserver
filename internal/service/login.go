@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"loginserver/internal/config"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"loginserver/internal/pkg/dto"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/streasure/util/component"
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/uredis"
@@ -16,11 +18,22 @@ import (
 
 type LoginService struct {
 	config *config.Config
+	// tokenKeyPrefix 完整的 loginToken key 前缀（belong/serverType:zone:loginToken:），
+	// 构造时计算一次，ValidateLoginToken 是热路径，避免每次重复拼接
+	tokenKeyPrefix string
+	// tokenCache 登录 token 的进程内微缓存，nil 表示禁用（配置 validateTokenCacheTtl）
+	tokenCache *pkg.TokenCache
 }
 
 func NewLoginService(cfg *config.Config) *LoginService {
+	var tokenCache *pkg.TokenCache
+	if d, err := time.ParseDuration(cfg.Limits.ValidateTokenCacheTtl); err == nil && d > 0 {
+		tokenCache = pkg.NewTokenCache(d)
+	}
 	return &LoginService{
-		config: cfg,
+		config:         cfg,
+		tokenKeyPrefix: cfg.Belong + "/" + cfg.ServerType + ":" + cfg.Zone + ":loginToken:",
+		tokenCache:     tokenCache,
 	}
 }
 
@@ -40,13 +53,18 @@ func (s *LoginService) GenerateLoginToken(ctx context.Context, accountId string)
 		return "", nil
 	}
 
-	key := pkg.WrapRedisLoginTokenKey(s.config, accountId)
+	key := s.tokenKeyPrefix + accountId
 	if err := redisClient.Set(ctx, key, loginToken, time.Second*time.Duration(s.config.Limits.LoginTokenExpireSeconds)).Err(); err != nil {
 		tlog.ErrorContext(ctx, "redis set login token failed",
 			"accountId", accountId,
 			"error", err.Error(),
 		)
 		return "", err
+	}
+
+	// 生成新 token 后立即更新缓存，保证随后的校验请求能用新 token 命中
+	if s.tokenCache != nil {
+		s.tokenCache.Set(accountId, loginToken)
 	}
 
 	tlog.DebugContext(ctx, "generate login token success",
@@ -64,14 +82,31 @@ func (s *LoginService) ValidateLoginToken(ctx context.Context, accountId, loginT
 		return false, nil
 	}
 
-	key := pkg.WrapRedisLoginTokenKey(s.config, accountId)
+	// 1. 命中本地缓存：直接与请求携带的 token 比对，无 Redis 往返
+	if s.tokenCache != nil {
+		if stored, ok := s.tokenCache.Get(accountId); ok {
+			return stored == loginToken, nil
+		}
+	}
+
+	// 2. 回源 Redis
+	key := s.tokenKeyPrefix + accountId
 	storedToken, err := redisClient.Get(ctx, key).Result()
 	if err != nil {
+		// 仅对 "key 不存在" 做负缓存（空串），防止无效账号的请求打穿到 Redis；
+		// 网络等其他错误不缓存，下一请求仍回源
+		if errors.Is(err, redis.Nil) && s.tokenCache != nil {
+			s.tokenCache.Set(accountId, "")
+		}
 		tlog.DebugContext(ctx, "redis get login token failed",
 			"accountId", accountId,
 			"error", err.Error(),
 		)
 		return false, err
+	}
+
+	if s.tokenCache != nil {
+		s.tokenCache.Set(accountId, storedToken)
 	}
 
 	return storedToken == loginToken, nil

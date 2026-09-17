@@ -13,6 +13,7 @@ import (
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/ugin"
 	"github.com/streasure/util/upprof"
+	"github.com/streasure/util/uperf"
 )
 
 var (
@@ -44,6 +45,9 @@ func main() {
 	}
 
 	conf := config.GetConfig()
+
+	// 应用运行时性能参数（GC 调优、内存软上限），须在任何组件分配大量内存前执行
+	uperf.Apply(conf.Perf.GcPercent, conf.Perf.MemoryLimitPercent)
 
 	// 创建容器
 	container := component.NewContainer()

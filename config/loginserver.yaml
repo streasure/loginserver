@@ -24,6 +24,12 @@ etcd:
 
 limits:
   loginTokenExpireSeconds: 86400
+  validateTokenCacheTtl: "1s"   # token 校验的进程内缓存窗口，0s 禁用；token 撤销生效延迟上界为该值
+
+# 运行时性能调优（进程启动时应用一次）
+perf:
+  gcPercent: 300        # GOGC 等效值（默认 100），本机压测 300 时吞吐最优
+  memoryLimitPercent: 80   # 软内存上限 = 机器总内存 × 该百分比（0-100），0 = 不限制；跨机器部署免修改
 
 serverList:
   clientGetServerListUrl: "http://localhost:10001/api/v1/server/list"

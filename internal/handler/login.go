@@ -3,6 +3,7 @@ package handler
 import (
 	"loginserver/internal/config"
 	"net/http"
+	"sync"
 
 	"loginserver/internal"
 	"loginserver/internal/pkg/dto"
@@ -12,6 +13,22 @@ import (
 	tlog "github.com/streasure/util/tlog"
 	"github.com/streasure/util/ugin"
 )
+
+var (
+	// loginServiceOnce 保证 LoginService 只构造一次，
+	// 避免每个 HTTP 请求重复创建实例和重复计算 key 前缀
+	loginServiceOnce sync.Once
+	loginService     *service.LoginService
+)
+
+// getLoginService 返回进程级 LoginService 单例。
+// 首次调用发生在 HTTP 服务启动后，此时配置已加载完成
+func getLoginService() *service.LoginService {
+	loginServiceOnce.Do(func() {
+		loginService = service.NewLoginService(config.GetConfig())
+	})
+	return loginService
+}
 
 func init() {
 	ugin.RegisterController("/api/v1/login", &ugin.HttpMapping{Method: http.MethodPost, Controller: Login})
@@ -31,7 +48,7 @@ func Login(c *gin.Context) {
 	}
 
 	cfg := config.GetConfig()
-	loginService := service.NewLoginService(cfg)
+	loginService := getLoginService()
 
 	accountId, err := loginService.BindAccount(ctx, loginReq.OpenId, loginReq.PtId)
 	if err != nil || len(accountId) == 0 {
@@ -76,7 +93,7 @@ func GetServerList(c *gin.Context) {
 		return
 	}
 
-	loginService := service.NewLoginService(config.GetConfig())
+	loginService := getLoginService()
 
 	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
 	if err != nil || !valid {
@@ -110,7 +127,7 @@ func ValidateLoginToken(c *gin.Context) {
 		return
 	}
 
-	loginService := service.NewLoginService(config.GetConfig())
+	loginService := getLoginService()
 
 	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
 	if err != nil {
