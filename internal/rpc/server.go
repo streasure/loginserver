@@ -47,6 +47,7 @@ func NewLoginGrpcServer(cfg *config.Config) *LoginGrpcServer {
 		ugrpc.WithZone(cfg.Zone),
 		ugrpc.WithServerId(cfg.ServerId),
 		ugrpc.WithHealth(true),
+		ugrpc.WithAPM(false),
 	)
 
 	// 注册业务 handler
