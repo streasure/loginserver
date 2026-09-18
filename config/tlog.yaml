@@ -1,17 +1,31 @@
 log:
   level: info
   format: json
+  async:
+    enabled: true
+    worker_multiplier: 1
+    buffer_size: 100000
+    batch_size: 1000
+    flush_interval: 100
   console:
     enabled: false
   file:
     enabled: true
     path: ./logs/loginserver.log
     rotate:
-      max_size: 500
+      max_size: 100
       max_backups: 10
       max_age: 30
-  async:
+      interval: 0
+  stacktrace:
     enabled: true
-    buffer_size: 100000
-    batch_size: 2000
-    flush_interval: 10
+    level: error
+    depth: 10
+  sampling:
+    enabled: true
+    initial: 10000
+    thereafter: 1000
+  performance:
+    lock_free: true
+    use_pool: true
+    prealloc: true
