@@ -31,7 +31,7 @@ func NewLoginGrpcServer(cfg *config.Config) *LoginGrpcServer {
 
 	// gRPC 服务端口为 0 时按配置禁用，不创建服务器
 	if cfg.Ports.GrpcServiceAddr == 0 {
-		tlog.Info("grpc service addr is empty, skip grpc server init")
+		tlog.Info(context.Background(), "grpc service addr is empty, skip grpc server init")
 		return s
 	}
 
@@ -81,7 +81,7 @@ func (s *LoginGrpcServer) Destroy() {
 func (s *LoginGrpcServer) ValidateLoginToken(ctx context.Context, req *loginproto.ValidateLoginTokenReq) (*loginproto.ValidateLoginTokenAck, error) {
 	valid, err := s.loginService.ValidateLoginToken(ctx, req.GetAccountId(), req.GetLoginToken())
 	if err != nil {
-		tlog.ErrorContext(ctx, "grpc ValidateLoginToken failed",
+		tlog.Error(ctx, "grpc ValidateLoginToken failed",
 			"accountId", req.GetAccountId(),
 			"error", err.Error(),
 		)

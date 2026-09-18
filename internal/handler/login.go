@@ -42,7 +42,7 @@ func Login(c *gin.Context) {
 
 	var loginReq dto.LoginReq
 	if err := c.ShouldBindJSON(&loginReq); err != nil {
-		tlog.InfoContext(ctx, "login param error", "error", err.Error())
+		tlog.Info(ctx, "login param error", "error", err.Error())
 		c.JSON(http.StatusOK, dto.Failure(1001, "param error"))
 		return
 	}
@@ -52,7 +52,7 @@ func Login(c *gin.Context) {
 
 	accountId, err := loginService.BindAccount(ctx, loginReq.OpenId, loginReq.PtId)
 	if err != nil || len(accountId) == 0 {
-		tlog.ErrorContext(ctx, "bind account failed",
+		tlog.Error(ctx, "bind account failed",
 			"openId", loginReq.OpenId,
 			"ptId", loginReq.PtId,
 			"error", err,
@@ -63,7 +63,7 @@ func Login(c *gin.Context) {
 
 	loginToken, err := loginService.GenerateLoginToken(ctx, accountId)
 	if err != nil {
-		tlog.ErrorContext(ctx, "generate login token failed",
+		tlog.Error(ctx, "generate login token failed",
 			"accountId", accountId,
 			"error", err.Error(),
 		)
@@ -71,7 +71,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	tlog.InfoContext(ctx, "login success",
+	tlog.Info(ctx, "login success",
 		"accountId", accountId,
 		"openId", loginReq.OpenId,
 	)
@@ -88,7 +88,7 @@ func GetServerList(c *gin.Context) {
 
 	var req dto.GetServerListReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		tlog.InfoContext(ctx, "get server list param error", "error", err.Error())
+		tlog.Info(ctx, "get server list param error", "error", err.Error())
 		c.JSON(http.StatusOK, dto.Failure(1001, "param error"))
 		return
 	}
@@ -97,7 +97,7 @@ func GetServerList(c *gin.Context) {
 
 	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
 	if err != nil || !valid {
-		tlog.InfoContext(ctx, "login token invalid",
+		tlog.Info(ctx, "login token invalid",
 			"accountId", req.AccountId,
 			"error", err,
 		)
@@ -122,7 +122,7 @@ func ValidateLoginToken(c *gin.Context) {
 
 	var req dto.ValidateLoginTokenReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		tlog.InfoContext(ctx, "validate login token param error", "error", err.Error())
+		tlog.Info(ctx, "validate login token param error", "error", err.Error())
 		c.JSON(http.StatusOK, dto.Failure(1001, "param error"))
 		return
 	}
@@ -131,7 +131,7 @@ func ValidateLoginToken(c *gin.Context) {
 
 	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
 	if err != nil {
-		tlog.InfoContext(ctx, "validate login token error",
+		tlog.Info(ctx, "validate login token error",
 			"accountId", req.AccountId,
 			"error", err.Error(),
 		)
@@ -141,7 +141,7 @@ func ValidateLoginToken(c *gin.Context) {
 		return
 	}
 
-	tlog.DebugContext(ctx, "validate login token",
+	tlog.Debug(ctx, "validate login token",
 		"accountId", req.AccountId,
 		"valid", valid,
 	)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"loginserver/internal"
@@ -40,7 +41,7 @@ func main() {
 	// 加载配置
 	err := config.LoadConfig(*confFiles)
 	if err != nil {
-		tlog.Error("load config failed error", err)
+		tlog.Error(context.Background(), "load config failed error", "error", err)
 		return
 	}
 
@@ -65,7 +66,7 @@ func main() {
 	// etcd（服务身份与通告地址取自 rpcServer 内的 gRPC 服务器，取不到直接报错退出）
 	etcdComp, err := internalcomponent.NewEtcdComponent(rpcServer)
 	if err != nil {
-		tlog.Error("create etcd component failed", "error", err.Error())
+		tlog.Error(context.Background(), "create etcd component failed", "error", err.Error())
 		return
 	}
 	container.Add(etcdComp)
@@ -76,7 +77,7 @@ func main() {
 	// pprof
 	container.Add(upprof.NewUPprofComponent(fmt.Sprintf(":%d", conf.Ports.PprofPort)))
 
-	tlog.Info("loginserver starting",
+	tlog.Info(context.Background(), "loginserver starting",
 		"belong", conf.Belong,
 		"serverType", conf.ServerType,
 		"zone", conf.Zone,
@@ -88,5 +89,5 @@ func main() {
 	// 启动所有组件
 	container.Serve()
 
-	tlog.Info("loginserver stopped")
+	tlog.Info(context.Background(), "loginserver stopped")
 }

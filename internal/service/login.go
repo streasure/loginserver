@@ -49,13 +49,13 @@ func (s *LoginService) GenerateLoginToken(ctx context.Context, accountId string)
 
 	redisClient := s.getRedisClient()
 	if redisClient == nil {
-		tlog.ErrorContext(ctx, "redis component not found")
+		tlog.Error(ctx, "redis component not found")
 		return "", nil
 	}
 
 	key := s.tokenKeyPrefix + accountId
 	if err := redisClient.Set(ctx, key, loginToken, time.Second*time.Duration(s.config.Limits.LoginTokenExpireSeconds)).Err(); err != nil {
-		tlog.ErrorContext(ctx, "redis set login token failed",
+		tlog.Error(ctx, "redis set login token failed",
 			"accountId", accountId,
 			"error", err.Error(),
 		)
@@ -67,7 +67,7 @@ func (s *LoginService) GenerateLoginToken(ctx context.Context, accountId string)
 		s.tokenCache.Set(accountId, loginToken)
 	}
 
-	tlog.DebugContext(ctx, "generate login token success",
+	tlog.Debug(ctx, "generate login token success",
 		"accountId", accountId,
 		"expireSeconds", s.config.Limits.LoginTokenExpireSeconds,
 	)
@@ -78,7 +78,7 @@ func (s *LoginService) GenerateLoginToken(ctx context.Context, accountId string)
 func (s *LoginService) ValidateLoginToken(ctx context.Context, accountId, loginToken string) (bool, error) {
 	redisClient := s.getRedisClient()
 	if redisClient == nil {
-		tlog.ErrorContext(ctx, "redis component not found")
+		tlog.Error(ctx, "redis component not found")
 		return false, nil
 	}
 
@@ -98,7 +98,7 @@ func (s *LoginService) ValidateLoginToken(ctx context.Context, accountId, loginT
 		if errors.Is(err, redis.Nil) && s.tokenCache != nil {
 			s.tokenCache.Set(accountId, "")
 		}
-		tlog.DebugContext(ctx, "redis get login token failed",
+		tlog.Debug(ctx, "redis get login token failed",
 			"accountId", accountId,
 			"error", err.Error(),
 		)
@@ -115,7 +115,7 @@ func (s *LoginService) ValidateLoginToken(ctx context.Context, accountId, loginT
 func (s *LoginService) BindAccount(ctx context.Context, openId string, ptId int32) (string, error) {
 	redisClient := s.getRedisClient()
 	if redisClient == nil {
-		tlog.ErrorContext(ctx, "redis component not found")
+		tlog.Error(ctx, "redis component not found")
 		return "", nil
 	}
 
@@ -123,7 +123,7 @@ func (s *LoginService) BindAccount(ctx context.Context, openId string, ptId int3
 
 	accountId, err := redisClient.Get(ctx, accountKey).Result()
 	if err == nil && len(accountId) > 0 {
-		tlog.DebugContext(ctx, "bind account hit cache",
+		tlog.Debug(ctx, "bind account hit cache",
 			"openId", openId,
 			"ptId", ptId,
 			"accountId", accountId,
@@ -133,7 +133,7 @@ func (s *LoginService) BindAccount(ctx context.Context, openId string, ptId int3
 
 	accountId = uuid.New().String()
 	if err := redisClient.Set(ctx, accountKey, accountId, 0).Err(); err != nil {
-		tlog.ErrorContext(ctx, "redis set account failed",
+		tlog.Error(ctx, "redis set account failed",
 			"openId", openId,
 			"ptId", ptId,
 			"error", err.Error(),
@@ -141,7 +141,7 @@ func (s *LoginService) BindAccount(ctx context.Context, openId string, ptId int3
 		return "", err
 	}
 
-	tlog.InfoContext(ctx, "bind account success",
+	tlog.Info(ctx, "bind account success",
 		"openId", openId,
 		"ptId", ptId,
 		"accountId", accountId,
