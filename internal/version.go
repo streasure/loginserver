@@ -1,5 +1,4 @@
 package internal
 
-const (
-	Version = "v1.0.0" // 服务器内部版本
-)
+// Version 服务器版本，通过 -ldflags "-X loginserver/internal.Version=v1.2.3" 注入
+var Version = "v1.0.0-dev"

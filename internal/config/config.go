@@ -1,19 +1,22 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/streasure/util/uconfig"
 )
 
 type Config struct {
-	Belong   string    `yaml:"belong"`
-	ServerType string  `yaml:"serverType"`
-	Zone     string    `yaml:"zone"`
-	ServerId string    `yaml:"serverId"`
-	Ports    Ports     `yaml:"ports"`
-	Redis    RedisInfo `yaml:"redis"`
-	Etcd     EtcdInfo  `yaml:"etcd"`
-	Limits   LimitInfo `yaml:"limits"`
-	Perf     PerfInfo  `yaml:"perf"`
+	Belong     string    `yaml:"belong"`
+	ServerType string    `yaml:"serverType"`
+	Zone       string    `yaml:"zone"`
+	ServerId   string    `yaml:"serverId"`
+	Ports      Ports     `yaml:"ports"`
+	Redis      RedisInfo `yaml:"redis"`
+	Etcd       EtcdInfo  `yaml:"etcd"`
+	Limits     LimitInfo `yaml:"limits"`
+	Perf       PerfInfo  `yaml:"perf"`
 }
 
 type Ports struct {
@@ -23,12 +26,12 @@ type Ports struct {
 }
 
 type RedisInfo struct {
-	Address            string `yaml:"address"`
-	DB                 int    `yaml:"db"`
-	Network            string `yaml:"network"`
-	Password           string `yaml:"password"`
-	ReadTimeoutSec     int64  `yaml:"readTimeoutSec"`
-	WriteTimeoutSec    int64  `yaml:"writeTimeoutSec"`
+	Address         string `yaml:"address"`
+	DB              int    `yaml:"db"`
+	Network         string `yaml:"network"`
+	Password        string `yaml:"password"`
+	ReadTimeoutSec  int64  `yaml:"readTimeoutSec"`
+	WriteTimeoutSec int64  `yaml:"writeTimeoutSec"`
 }
 
 type EtcdInfo struct {
@@ -38,22 +41,13 @@ type EtcdInfo struct {
 }
 
 type LimitInfo struct {
-	LoginTokenExpireSeconds int64 `yaml:"loginTokenExpireSeconds"`
-	// ValidateTokenCacheTtl token 校验的进程内缓存时长（如 "1s"）。
-	// 该缓存消除热路径的 Redis 往返；代价是 token 撤销（删除 Redis key）的生效
-	// 延迟上界为该值。设为 "0s" 或不填表示禁用缓存（每次校验都查 Redis）
-	ValidateTokenCacheTtl string `yaml:"validateTokenCacheTtl"`
+	LoginTokenExpireSeconds int64  `yaml:"loginTokenExpireSeconds"`
+	ValidateTokenCacheTtl   string `yaml:"validateTokenCacheTtl"`
 }
 
-// PerfInfo 运行时性能调优参数，进程启动时应用一次（main 中通过 debug 包设置）
 type PerfInfo struct {
-	// GcPercent 等同于 GOGC 环境变量：触发 GC 的堆增长百分比。
-	// 本服务压测显示 300 时吞吐最优（GC 占约 15% CPU）。0 表示保持 Go 默认值 100
-	GcPercent int `yaml:"gcPercent"`
-	// MemoryLimitPercent Go 堆软内存上限（GOMEMLIMIT 等效），取机器总物理内存的百分比。
-	// 接近上限时 GC 会更激进。0 表示不设置；按百分比设计，同一份配置
-	// 跨机器部署无需修改，推荐 80-90
-	MemoryLimitPercent int `yaml:"memoryLimitPercent"`
+	GcPercent           int `yaml:"gcPercent"`
+	MemoryLimitPercent  int `yaml:"memoryLimitPercent"`
 }
 
 var _defaultConfig = &Config{}
@@ -67,7 +61,46 @@ func LoadConfig(configFile ...string) error {
 	if err != nil {
 		return err
 	}
+	if err := validate(cfg); err != nil {
+		return fmt.Errorf("config validation: %w", err)
+	}
 	_defaultConfig = cfg
+	return nil
+}
 
+func validate(cfg *Config) error {
+	if cfg.Belong == "" {
+		return errors.New("belong is required")
+	}
+	if cfg.ServerType == "" {
+		return errors.New("serverType is required")
+	}
+	if cfg.Zone == "" {
+		return errors.New("zone is required")
+	}
+	if cfg.Ports.HttpAddr <= 0 {
+		return errors.New("ports.httpAddr must be positive")
+	}
+	if cfg.Ports.GrpcServiceAddr < 0 {
+		return errors.New("ports.grpcServiceAddr must be non-negative")
+	}
+	if cfg.Ports.PprofPort <= 0 {
+		return errors.New("ports.pprofPort must be positive")
+	}
+	if cfg.Ports.HttpAddr == cfg.Ports.GrpcServiceAddr {
+		return errors.New("ports.httpAddr and ports.grpcServiceAddr must differ")
+	}
+	if cfg.Ports.HttpAddr == cfg.Ports.PprofPort {
+		return errors.New("ports.httpAddr and ports.pprofPort must differ")
+	}
+	if cfg.Ports.GrpcServiceAddr == cfg.Ports.PprofPort {
+		return errors.New("ports.grpcServiceAddr and ports.pprofPort must differ")
+	}
+	if cfg.Redis.Address == "" {
+		return errors.New("redis.address is required")
+	}
+	if cfg.Limits.LoginTokenExpireSeconds <= 0 {
+		return errors.New("limits.loginTokenExpireSeconds must be positive")
+	}
 	return nil
 }

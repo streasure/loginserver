@@ -35,7 +35,7 @@ func main() {
 	conns := make([]*grpc.ClientConn, numConns)
 	clients := make([]loginproto.LoginServiceClient, numConns)
 	for i := 0; i < numConns; i++ {
-		conn, err := grpc.Dial(*target,
+		conn, err := grpc.NewClient(*target,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(4*1024*1024)),
 		)

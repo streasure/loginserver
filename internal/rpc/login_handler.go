@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/streasure/util/tlog"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	loginproto "github.com/streasure/protocol/loginserver"
 
@@ -28,7 +30,7 @@ func (h *LoginHandler) ValidateLoginToken(ctx context.Context, req *loginproto.V
 			"accountId", req.GetAccountId(),
 			"error", err.Error(),
 		)
-		return &loginproto.ValidateLoginTokenAck{Valid: false}, nil
+		return nil, status.Error(codes.Internal, "validate login token failed")
 	}
 
 	return &loginproto.ValidateLoginTokenAck{Valid: valid}, nil

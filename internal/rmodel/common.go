@@ -5,6 +5,7 @@ package rmodel
 import (
 	"errors"
 	"strconv"
+	"sync"
 
 	"github.com/streasure/util/component"
 	"github.com/streasure/util/uredis"
@@ -14,11 +15,16 @@ import (
 var ErrRedisUnavailable = errors.New("redis client unavailable")
 
 // keyPrefix key 前缀：{belong}/{serverType}:{zone}:
-var keyPrefix string
+var (
+	keyPrefix string
+	initOnce  sync.Once
+)
 
 // Init 初始化 Redis key 前缀，须在首次使用 rmodel 前调用
 func Init(belong, serverType, zone string) {
-	keyPrefix = belong + "/" + serverType + ":" + zone + ":"
+	initOnce.Do(func() {
+		keyPrefix = belong + "/" + serverType + ":" + zone + ":"
+	})
 }
 
 // redisCli 返回全局 Redis 客户端（从 component 容器获取）

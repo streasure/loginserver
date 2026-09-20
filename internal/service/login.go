@@ -36,8 +36,15 @@ func GetLoginService() *LoginService {
 func newLoginService() *LoginService {
 	cfg := config.GetConfig()
 	var tokenCache *pkg.TokenCache
-	if d, err := time.ParseDuration(cfg.Limits.ValidateTokenCacheTtl); err == nil && d > 0 {
-		tokenCache = pkg.NewTokenCache(d)
+	if cfg.Limits.ValidateTokenCacheTtl != "" {
+		if d, err := time.ParseDuration(cfg.Limits.ValidateTokenCacheTtl); err == nil && d > 0 {
+			tokenCache = pkg.NewTokenCache(d)
+		} else {
+			tlog.Warn(context.Background(), "invalid ValidateTokenCacheTtl, cache disabled",
+				"value", cfg.Limits.ValidateTokenCacheTtl,
+				"error", err,
+			)
+		}
 	}
 	return &LoginService{
 		tokenCache:          tokenCache,
@@ -73,8 +80,10 @@ func (s *LoginService) ValidateLoginToken(ctx context.Context, accountId, loginT
 
 	storedToken, err := rmodel.GetLoginToken(ctx, accountId)
 	if err != nil {
-		if errors.Is(err, redis.Nil) && s.tokenCache != nil {
-			s.tokenCache.Set(accountId, "")
+		if errors.Is(err, redis.Nil) {
+			tlog.Debug(ctx, "login token not found in redis",
+				"accountId", accountId,
+			)
 		}
 		return false, err
 	}
