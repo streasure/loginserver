@@ -52,7 +52,6 @@ func main() {
 		}
 	}()
 
-	// warmup
 	fmt.Printf("warming up for %s (connections=%d, workers=%d)...\n", *warmup, numConns, *concurrency)
 	warmupDeadline := time.Now().Add(*warmup)
 	var warmupWg sync.WaitGroup
@@ -74,8 +73,7 @@ func main() {
 	warmupWg.Wait()
 	runtime.GC()
 
-	// actual test
-	var completed, failed, totalLatencyNs int64
+	var completed, failed, totalLatencyNs atomic.Int64
 	latencies := make([]int64, 0, 5000000)
 	var mu sync.Mutex
 
@@ -97,12 +95,12 @@ func main() {
 				})
 				cancel()
 				lat := time.Since(started).Nanoseconds()
-				atomic.AddInt64(&totalLatencyNs, lat)
+				totalLatencyNs.Add(lat)
 				localLatencies = append(localLatencies, lat)
 				if callErr != nil {
-					atomic.AddInt64(&failed, 1)
+					failed.Add(1)
 				} else {
-					atomic.AddInt64(&completed, 1)
+					completed.Add(1)
 				}
 			}
 			mu.Lock()
@@ -113,7 +111,7 @@ func main() {
 
 	wg.Wait()
 
-	total := atomic.LoadInt64(&completed) + atomic.LoadInt64(&failed)
+	total := completed.Load() + failed.Load()
 	if total == 0 {
 		fmt.Println("no requests completed")
 		return
@@ -125,11 +123,11 @@ func main() {
 	p99 := latencies[len(latencies)*99/100]
 	p999 := latencies[len(latencies)*999/1000]
 	max := latencies[len(latencies)-1]
-	avgMs := float64(atomic.LoadInt64(&totalLatencyNs)) / float64(total) / float64(time.Millisecond)
+	avgMs := float64(totalLatencyNs.Load()) / float64(total) / float64(time.Millisecond)
 	rps := float64(total) / duration.Seconds()
 
 	fmt.Printf("concurrency=%d connections=%d duration=%s\n", *concurrency, numConns, *duration)
-	fmt.Printf("total=%d completed=%d failed=%d\n", total, completed, failed)
+	fmt.Printf("total=%d completed=%d failed=%d\n", total, completed.Load(), failed.Load())
 	fmt.Printf("rps=%.0f avg=%.2fms p50=%.2fms p95=%.2fms p99=%.2fms p99.9=%.2fms max=%.2fms\n",
 		rps, avgMs,
 		float64(p50)/float64(time.Millisecond),

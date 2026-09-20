@@ -1,5 +1,12 @@
 package dto
 
+// 业务错误码
+const (
+	CodeParamError        = 1001
+	CodeBindAccountFailed = 1002
+	CodeTokenGenFailed    = 1003
+)
+
 type Response[T any] struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -21,44 +28,14 @@ func Failure(code int, msg string) *Response[any] {
 	}
 }
 
-func WithCodeMsg(code int, msg string) *Response[any] {
-	return &Response[any]{
-		Code:    code,
-		Message: msg,
-	}
-}
-
 type LoginReq struct {
 	OpenId string `json:"openId" binding:"required"`
-	Token  string `json:"token"`
 	PtId   int32  `json:"ptid"`
-	Mode   int32  `json:"mode"`
 }
 
 type LoginAck struct {
-	AccountId     string `json:"accountId"`
-	LoginToken    string `json:"loginToken"`
-	ServerListUrl string `json:"serverListUrl"`
-}
-
-type GetServerListReq struct {
-	AccountId  string `json:"accountId" binding:"required"`
-	LoginToken string `json:"loginToken" binding:"required"`
-}
-
-type ServerInfo struct {
-	ServerId     int32  `json:"serverId"`
-	ServerName   string `json:"serverName"`
-	ServerUrl    string `json:"serverUrl"`
-	ServerStatus int32  `json:"serverStatus"`
-}
-
-type GetServerListAck struct {
-	Servers []ServerInfo `json:"servers"`
-}
-
-type GetVersionReq struct {
-	CenterFlag string `json:"centerFlag"`
+	AccountId  string `json:"accountId"`
+	LoginToken string `json:"loginToken"`
 }
 
 type GetVersionAck struct {

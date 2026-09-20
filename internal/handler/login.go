@@ -1,9 +1,7 @@
 package handler
 
 import (
-	"loginserver/internal/config"
 	"net/http"
-	"sync"
 
 	"loginserver/internal"
 	"loginserver/internal/pkg/dto"
@@ -14,25 +12,9 @@ import (
 	"github.com/streasure/util/ugin"
 )
 
-var (
-	// loginServiceOnce 保证 LoginService 只构造一次，
-	// 避免每个 HTTP 请求重复创建实例和重复计算 key 前缀
-	loginServiceOnce sync.Once
-	loginService     *service.LoginService
-)
-
-// getLoginService 返回进程级 LoginService 单例。
-// 首次调用发生在 HTTP 服务启动后，此时配置已加载完成
-func getLoginService() *service.LoginService {
-	loginServiceOnce.Do(func() {
-		loginService = service.NewLoginService(config.GetConfig())
-	})
-	return loginService
-}
-
-func init() {
+// RegisterRoutes 注册所有 HTTP 路由到 ugin 全局路由表
+func RegisterRoutes() {
 	ugin.RegisterController("/api/v1/login", &ugin.HttpMapping{Method: http.MethodPost, Controller: Login})
-	ugin.RegisterController("/api/v1/server/list", &ugin.HttpMapping{Method: http.MethodPost, Controller: GetServerList})
 	ugin.RegisterController("/api/v1/version", &ugin.HttpMapping{Method: http.MethodPost, Controller: GetVersion})
 	ugin.RegisterController("/api/v1/validate/token", &ugin.HttpMapping{Method: http.MethodPost, Controller: ValidateLoginToken})
 }
@@ -43,12 +25,11 @@ func Login(c *gin.Context) {
 	var loginReq dto.LoginReq
 	if err := c.ShouldBindJSON(&loginReq); err != nil {
 		tlog.Info(ctx, "login param error", "error", err.Error())
-		c.JSON(http.StatusOK, dto.Failure(1001, "param error"))
+		c.JSON(http.StatusOK, dto.Failure(dto.CodeParamError, "param error"))
 		return
 	}
 
-	cfg := config.GetConfig()
-	loginService := getLoginService()
+	loginService := service.GetLoginService()
 
 	accountId, err := loginService.BindAccount(ctx, loginReq.OpenId, loginReq.PtId)
 	if err != nil || len(accountId) == 0 {
@@ -57,7 +38,7 @@ func Login(c *gin.Context) {
 			"ptId", loginReq.PtId,
 			"error", err,
 		)
-		c.JSON(http.StatusOK, dto.Failure(1002, "bind account failed"))
+		c.JSON(http.StatusOK, dto.Failure(dto.CodeBindAccountFailed, "bind account failed"))
 		return
 	}
 
@@ -67,7 +48,7 @@ func Login(c *gin.Context) {
 			"accountId", accountId,
 			"error", err.Error(),
 		)
-		c.JSON(http.StatusOK, dto.Failure(1003, "generate login token failed"))
+		c.JSON(http.StatusOK, dto.Failure(dto.CodeTokenGenFailed, "generate login token failed"))
 		return
 	}
 
@@ -77,37 +58,8 @@ func Login(c *gin.Context) {
 	)
 
 	c.JSON(http.StatusOK, dto.Success(dto.LoginAck{
-		AccountId:     accountId,
-		LoginToken:    loginToken,
-		ServerListUrl: cfg.ServerList.ClientGetServerListUrl,
-	}))
-}
-
-func GetServerList(c *gin.Context) {
-	ctx := c.Request.Context()
-
-	var req dto.GetServerListReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		tlog.Info(ctx, "get server list param error", "error", err.Error())
-		c.JSON(http.StatusOK, dto.Failure(1001, "param error"))
-		return
-	}
-
-	loginService := getLoginService()
-
-	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
-	if err != nil || !valid {
-		tlog.Info(ctx, "login token invalid",
-			"accountId", req.AccountId,
-			"error", err,
-		)
-		c.JSON(http.StatusOK, dto.Failure(1004, "login token invalid"))
-		return
-	}
-
-	servers := loginService.GetServerList(ctx)
-	c.JSON(http.StatusOK, dto.Success(dto.GetServerListAck{
-		Servers: servers,
+		AccountId:  accountId,
+		LoginToken: loginToken,
 	}))
 }
 
@@ -123,11 +75,11 @@ func ValidateLoginToken(c *gin.Context) {
 	var req dto.ValidateLoginTokenReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		tlog.Info(ctx, "validate login token param error", "error", err.Error())
-		c.JSON(http.StatusOK, dto.Failure(1001, "param error"))
+		c.JSON(http.StatusOK, dto.Failure(dto.CodeParamError, "param error"))
 		return
 	}
 
-	loginService := getLoginService()
+	loginService := service.GetLoginService()
 
 	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
 	if err != nil {

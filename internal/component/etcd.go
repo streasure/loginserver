@@ -14,10 +14,6 @@ import (
 // etcd 组件由 util 默认排在所有业务组件之后启动（Order 最大），注册时业务已就绪
 func NewEtcdComponent(rpcServer *rpc.LoginGrpcServer) (*uetcd.Component, error) {
 	cfg := config.GetConfig()
-	endpoints := cfg.Etcd.Endpoints
-	if len(endpoints) == 0 && len(cfg.Etcd.Endpoint) > 0 {
-		endpoints = []string{cfg.Etcd.Endpoint}
-	}
 
 	grpcSrv := rpcServer.GrpcServer()
 	if grpcSrv == nil {
@@ -27,7 +23,7 @@ func NewEtcdComponent(rpcServer *rpc.LoginGrpcServer) (*uetcd.Component, error) 
 	serviceKey := grpcSrv.ServiceKey()
 	comp := uetcd.New(uetcd.ComponentConfig{
 		Etcd: uetcd.Config{
-			Endpoints:     endpoints,
+			Endpoints:     cfg.Etcd.Endpoints,
 			ServicePrefix: cfg.Etcd.ServicePrefix,
 		},
 		Registration: uetcd.RegistrationConfig{

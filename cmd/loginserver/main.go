@@ -7,7 +7,8 @@ import (
 	"loginserver/internal"
 	internalcomponent "loginserver/internal/component"
 	"loginserver/internal/config"
-	_ "loginserver/internal/handler"
+	"loginserver/internal/handler"
+	"loginserver/internal/rmodel"
 	"loginserver/internal/rpc"
 
 	"github.com/streasure/util/component"
@@ -47,6 +48,12 @@ func main() {
 
 	conf := config.GetConfig()
 
+	// 初始化 rmodel Redis key 前缀
+	rmodel.Init(conf.Belong, conf.ServerType, conf.Zone)
+
+	// 注册 HTTP 路由
+	handler.RegisterRoutes()
+
 	// 应用运行时性能参数（GC 调优、内存软上限），须在任何组件分配大量内存前执行
 	uperf.Apply(conf.Perf.GcPercent, conf.Perf.MemoryLimitPercent)
 
@@ -60,7 +67,7 @@ func main() {
 	container.Add(internalcomponent.NewRedisComponent())
 
 	// gRPC 业务组件
-	rpcServer := rpc.NewLoginGrpcServer(conf)
+	rpcServer := rpc.NewLoginGrpcServer()
 	container.Add(rpcServer)
 
 	// etcd（服务身份与通告地址取自 rpcServer 内的 gRPC 服务器，取不到直接报错退出）

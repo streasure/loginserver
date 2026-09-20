@@ -36,7 +36,6 @@ func main() {
 	}
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 
-	// warmup: send requests to fill connection pool and stabilize GC
 	fmt.Printf("warming up for %s...\n", *warmup)
 	warmupDeadline := time.Now().Add(*warmup)
 	var warmupWg sync.WaitGroup
@@ -63,8 +62,7 @@ func main() {
 	warmupWg.Wait()
 	runtime.GC()
 
-	// actual test
-	var completed, failed, totalLatencyNs int64
+	var completed, failed, totalLatencyNs atomic.Int64
 	latencies := make([]int64, 0, 5000000)
 	var mu sync.Mutex
 
@@ -81,21 +79,21 @@ func main() {
 				started := time.Now()
 				req, err := http.NewRequest("POST", *target, bytes.NewReader(body))
 				if err != nil {
-					atomic.AddInt64(&failed, 1)
+					failed.Add(1)
 					continue
 				}
 				req.Header.Set("Content-Type", "application/json")
 				resp, err := client.Do(req)
 				if err != nil {
-					atomic.AddInt64(&failed, 1)
+					failed.Add(1)
 					continue
 				}
 				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 				lat := time.Since(started).Nanoseconds()
-				atomic.AddInt64(&totalLatencyNs, lat)
+				totalLatencyNs.Add(lat)
 				localLatencies = append(localLatencies, lat)
-				atomic.AddInt64(&completed, 1)
+				completed.Add(1)
 			}
 			mu.Lock()
 			latencies = append(latencies, localLatencies...)
@@ -106,7 +104,7 @@ func main() {
 	wg.Wait()
 	transport.CloseIdleConnections()
 
-	total := atomic.LoadInt64(&completed) + atomic.LoadInt64(&failed)
+	total := completed.Load() + failed.Load()
 	if total == 0 {
 		fmt.Println("no requests completed")
 		return
@@ -118,11 +116,11 @@ func main() {
 	p99 := latencies[len(latencies)*99/100]
 	p999 := latencies[len(latencies)*999/1000]
 	max := latencies[len(latencies)-1]
-	avgMs := float64(atomic.LoadInt64(&totalLatencyNs)) / float64(total) / float64(time.Millisecond)
+	avgMs := float64(totalLatencyNs.Load()) / float64(total) / float64(time.Millisecond)
 	rps := float64(total) / duration.Seconds()
 
 	fmt.Printf("concurrency=%d duration=%s\n", *concurrency, *duration)
-	fmt.Printf("total=%d completed=%d failed=%d\n", total, completed, failed)
+	fmt.Printf("total=%d completed=%d failed=%d\n", total, completed.Load(), failed.Load())
 	fmt.Printf("rps=%.0f avg=%.2fms p50=%.2fms p95=%.2fms p99=%.2fms p99.9=%.2fms max=%.2fms\n",
 		rps, avgMs,
 		float64(p50)/float64(time.Millisecond),

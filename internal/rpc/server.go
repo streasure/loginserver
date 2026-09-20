@@ -14,19 +14,19 @@ import (
 	"loginserver/internal/service"
 )
 
+// LoginGrpcServer 负责 gRPC 服务器的生命周期管理（创建、启动、销毁），
+// 业务逻辑由 LoginHandler 实现，通过组合方式注册到 gRPC 服务器。
 type LoginGrpcServer struct {
 	component.BaseComponent
 
-	loginproto.UnimplementedLoginServiceServer
-
-	server       *ugrpc.Server
-	config       *config.Config
-	loginService *service.LoginService
+	server  *ugrpc.Server
+	handler *LoginHandler
 }
 
-func NewLoginGrpcServer(cfg *config.Config) *LoginGrpcServer {
+func NewLoginGrpcServer() *LoginGrpcServer {
+	cfg := config.GetConfig()
 	s := &LoginGrpcServer{
-		config: cfg,
+		handler: NewLoginHandler(service.GetLoginService()),
 	}
 
 	// gRPC 服务端口为 0 时按配置禁用，不创建服务器
@@ -51,7 +51,7 @@ func NewLoginGrpcServer(cfg *config.Config) *LoginGrpcServer {
 	)
 
 	// 注册业务 handler
-	loginproto.RegisterLoginServiceServer(s.server, s)
+	loginproto.RegisterLoginServiceServer(s.server, s.handler)
 	s.server.SetServingStatus("loginserver.LoginService", true)
 
 	return s
@@ -68,8 +68,6 @@ func (s *LoginGrpcServer) Start() error {
 		return nil
 	}
 
-	s.loginService = service.NewLoginService(config.GetConfig())
-
 	return s.server.Start()
 }
 
@@ -77,17 +75,4 @@ func (s *LoginGrpcServer) Destroy() {
 	if s.server != nil {
 		s.server.Stop()
 	}
-}
-
-func (s *LoginGrpcServer) ValidateLoginToken(ctx context.Context, req *loginproto.ValidateLoginTokenReq) (*loginproto.ValidateLoginTokenAck, error) {
-	valid, err := s.loginService.ValidateLoginToken(ctx, req.GetAccountId(), req.GetLoginToken())
-	if err != nil {
-		tlog.Error(ctx, "grpc ValidateLoginToken failed",
-			"accountId", req.GetAccountId(),
-			"error", err.Error(),
-		)
-		return &loginproto.ValidateLoginTokenAck{Valid: false}, nil
-	}
-
-	return &loginproto.ValidateLoginTokenAck{Valid: valid}, nil
 }

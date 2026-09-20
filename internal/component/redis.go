@@ -23,7 +23,7 @@ func NewRedisComponent() *uredis.StandaloneComponent {
 		Network:      network,
 		DB:           cfg.Redis.DB,
 		Password:     cfg.Redis.Password,
-		ReadTimeout:  time.Duration(cfg.RedisReadTimeoutSec) * time.Second,
-		WriteTimeout: time.Duration(cfg.RedisWriteTimeoutSec) * time.Second,
+		ReadTimeout:  time.Duration(cfg.Redis.ReadTimeoutSec) * time.Second,
+		WriteTimeout: time.Duration(cfg.Redis.WriteTimeoutSec) * time.Second,
 	})
 }
