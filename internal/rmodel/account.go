@@ -3,10 +3,11 @@ package rmodel
 import (
 	"context"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/streasure/util/tlog"
 )
 
-// GetAccount 根据 openId+ptId 获取已绑定的 accountId，未绑定时返回空串
+// GetAccount 根据 openId+ptId 获取已绑定的 accountId，未绑定时返回 ("", nil)
 func GetAccount(ctx context.Context, openId string, ptId int32) (string, error) {
 	cli, err := redisCli()
 	if err != nil {
@@ -16,6 +17,9 @@ func GetAccount(ctx context.Context, openId string, ptId int32) (string, error) 
 	key := accountKey(openId, ptId)
 	accountId, err := cli.Get(ctx, key).Result()
 	if err != nil {
+		if err == redis.Nil {
+			return "", nil
+		}
 		return "", err
 	}
 	return accountId, nil

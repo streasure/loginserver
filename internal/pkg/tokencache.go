@@ -25,6 +25,9 @@ type TokenCache struct {
 
 // NewTokenCache 创建 token 缓存。ttl 必须大于 0
 func NewTokenCache(ttl time.Duration) *TokenCache {
+	if ttl <= 0 {
+		panic("tokencache: ttl must be positive")
+	}
 	return &TokenCache{
 		cur:  make(map[string]string),
 		ttl:  ttl,

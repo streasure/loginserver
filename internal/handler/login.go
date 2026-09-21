@@ -83,13 +83,11 @@ func ValidateLoginToken(c *gin.Context) {
 
 	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
 	if err != nil {
-		tlog.Info(ctx, "validate login token error",
+		tlog.Error(ctx, "validate login token error",
 			"accountId", req.AccountId,
 			"error", err.Error(),
 		)
-		c.JSON(http.StatusOK, dto.Success(dto.ValidateLoginTokenAck{
-			Valid: false,
-		}))
+		c.JSON(http.StatusInternalServerError, dto.Failure(dto.CodeTokenGenFailed, "validate login token failed"))
 		return
 	}
 

@@ -81,9 +81,7 @@ func (s *LoginService) ValidateLoginToken(ctx context.Context, accountId, loginT
 	storedToken, err := rmodel.GetLoginToken(ctx, accountId)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			tlog.Debug(ctx, "login token not found in redis",
-				"accountId", accountId,
-			)
+			return false, nil
 		}
 		return false, err
 	}
@@ -97,7 +95,10 @@ func (s *LoginService) ValidateLoginToken(ctx context.Context, accountId, loginT
 
 func (s *LoginService) BindAccount(ctx context.Context, openId string, ptId int32) (string, error) {
 	accountId, err := rmodel.GetAccount(ctx, openId, ptId)
-	if err == nil && len(accountId) > 0 {
+	if err != nil {
+		return "", err
+	}
+	if len(accountId) > 0 {
 		tlog.Debug(ctx, "bind account hit cache",
 			"openId", openId,
 			"ptId", ptId,
