@@ -17,6 +17,8 @@ type Config struct {
 	Etcd       EtcdInfo  `yaml:"etcd"`
 	Limits     LimitInfo `yaml:"limits"`
 	Perf       PerfInfo  `yaml:"perf"`
+
+	ServiceKey string
 }
 
 type Ports struct {
@@ -46,8 +48,8 @@ type LimitInfo struct {
 }
 
 type PerfInfo struct {
-	GcPercent           int `yaml:"gcPercent"`
-	MemoryLimitPercent  int `yaml:"memoryLimitPercent"`
+	GcPercent          int `yaml:"gcPercent"`
+	MemoryLimitPercent int `yaml:"memoryLimitPercent"`
 }
 
 var _defaultConfig = &Config{}
@@ -64,6 +66,8 @@ func LoadConfig(configFile ...string) error {
 	if err := validate(cfg); err != nil {
 		return fmt.Errorf("config validation: %w", err)
 	}
+
+	cfg.ServiceKey = cfg.Belong + "/" + cfg.ServerType + ":" + cfg.Zone
 	_defaultConfig = cfg
 	return nil
 }

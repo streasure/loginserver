@@ -40,7 +40,7 @@ func newLoginService() *LoginService {
 		if d, err := time.ParseDuration(cfg.Limits.ValidateTokenCacheTtl); err == nil && d > 0 {
 			tokenCache = pkg.NewTokenCache(d)
 		} else {
-			tlog.Warn(context.Background(), "invalid ValidateTokenCacheTtl, cache disabled",
+			tlog.Warn(context.TODO(), "invalid ValidateTokenCacheTtl, cache disabled",
 				"value", cfg.Limits.ValidateTokenCacheTtl,
 				"error", err,
 			)

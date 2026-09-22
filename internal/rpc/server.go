@@ -31,7 +31,7 @@ func NewLoginGrpcServer() *LoginGrpcServer {
 
 	// gRPC 服务端口为 0 时按配置禁用，不创建服务器
 	if cfg.Ports.GrpcServiceAddr == 0 {
-		tlog.Info(context.Background(), "grpc service addr is empty, skip grpc server init")
+		tlog.Info(context.TODO(), "grpc service addr is empty, skip grpc server init")
 		return s
 	}
 

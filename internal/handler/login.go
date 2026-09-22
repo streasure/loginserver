@@ -12,8 +12,8 @@ import (
 	"github.com/streasure/util/ugin"
 )
 
-// RegisterRoutes 注册所有 HTTP 路由到 ugin 全局路由表
-func RegisterRoutes() {
+// 注册所有 HTTP 路由到 ugin 全局路由表
+func init() {
 	ugin.RegisterController("/api/v1/login", &ugin.HttpMapping{Method: http.MethodPost, Controller: Login})
 	ugin.RegisterController("/api/v1/version", &ugin.HttpMapping{Method: http.MethodPost, Controller: GetVersion})
 	ugin.RegisterController("/api/v1/validate/token", &ugin.HttpMapping{Method: http.MethodPost, Controller: ValidateLoginToken})

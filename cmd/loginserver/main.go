@@ -7,8 +7,7 @@ import (
 	"loginserver/internal"
 	internalcomponent "loginserver/internal/component"
 	"loginserver/internal/config"
-	"loginserver/internal/handler"
-	"loginserver/internal/rmodel"
+	_ "loginserver/internal/handler"
 	"loginserver/internal/rpc"
 
 	"github.com/streasure/util/component"
@@ -42,17 +41,11 @@ func main() {
 	// 加载配置
 	err := config.LoadConfig(*confFiles)
 	if err != nil {
-		tlog.Error(context.Background(), "load config failed error", "error", err)
+		tlog.Error(context.TODO(), "load config failed error", "error", err)
 		return
 	}
 
 	conf := config.GetConfig()
-
-	// 初始化 rmodel Redis key 前缀
-	rmodel.Init(conf.Belong, conf.ServerType, conf.Zone)
-
-	// 注册 HTTP 路由
-	handler.RegisterRoutes()
 
 	// 应用运行时性能参数（GC 调优、内存软上限），须在任何组件分配大量内存前执行
 	uperf.Apply(conf.Perf.GcPercent, conf.Perf.MemoryLimitPercent)
@@ -70,10 +63,10 @@ func main() {
 	rpcServer := rpc.NewLoginGrpcServer()
 	container.Add(rpcServer)
 
-	// etcd（服务身份与通告地址取自 rpcServer 内的 gRPC 服务器，取不到直接报错退出）
-	etcdComp, err := internalcomponent.NewEtcdComponent(rpcServer)
+	// etcd
+	etcdComp, err := internalcomponent.NewEtcdComponent()
 	if err != nil {
-		tlog.Error(context.Background(), "create etcd component failed", "error", err.Error())
+		tlog.Error(context.TODO(), "create etcd component failed", "error", err.Error())
 		return
 	}
 	container.Add(etcdComp)
@@ -86,7 +79,7 @@ func main() {
 	// pprof
 	container.Add(upprof.NewUPprofComponent(fmt.Sprintf(":%d", conf.Ports.PprofPort)))
 
-	tlog.Info(context.Background(), "loginserver starting",
+	tlog.Info(context.TODO(), "loginserver starting",
 		"belong", conf.Belong,
 		"serverType", conf.ServerType,
 		"zone", conf.Zone,
@@ -98,5 +91,5 @@ func main() {
 	// 启动所有组件
 	container.Serve()
 
-	tlog.Info(context.Background(), "loginserver stopped")
+	tlog.Info(context.TODO(), "loginserver stopped")
 }
