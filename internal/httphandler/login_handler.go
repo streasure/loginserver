@@ -1,4 +1,4 @@
-package handler
+package httphandler
 
 import (
 	"net/http"
@@ -24,7 +24,7 @@ func Login(c *gin.Context) {
 
 	var loginReq dto.LoginReq
 	if err := c.ShouldBindJSON(&loginReq); err != nil {
-		tlog.Info(ctx, "login param error", "error", err.Error())
+		tlog.Info(ctx, "login param error:%v", err)
 		c.JSON(http.StatusOK, dto.Failure(dto.CodeParamError, "param error"))
 		return
 	}
@@ -33,29 +33,19 @@ func Login(c *gin.Context) {
 
 	accountId, err := loginService.BindAccount(ctx, loginReq.OpenId, loginReq.PtId)
 	if err != nil || len(accountId) == 0 {
-		tlog.Error(ctx, "bind account failed",
-			"openId", loginReq.OpenId,
-			"ptId", loginReq.PtId,
-			"error", err,
-		)
+		tlog.Error(ctx, "bind account failed openId:%s ptId:%d err:%v", loginReq.OpenId, loginReq.PtId, err)
 		c.JSON(http.StatusOK, dto.Failure(dto.CodeBindAccountFailed, "bind account failed"))
 		return
 	}
 
 	loginToken, err := loginService.GenerateLoginToken(ctx, accountId)
 	if err != nil {
-		tlog.Error(ctx, "generate login token failed",
-			"accountId", accountId,
-			"error", err.Error(),
-		)
+		tlog.Error(ctx, "generate account:%s login token err:%v", accountId, err)
 		c.JSON(http.StatusOK, dto.Failure(dto.CodeTokenGenFailed, "generate login token failed"))
 		return
 	}
 
-	tlog.Info(ctx, "login success",
-		"accountId", accountId,
-		"openId", loginReq.OpenId,
-	)
+	tlog.Info(ctx, "login success account:%s token:%s", accountId, loginToken)
 
 	c.JSON(http.StatusOK, dto.Success(dto.LoginAck{
 		AccountId:  accountId,
@@ -74,7 +64,7 @@ func ValidateLoginToken(c *gin.Context) {
 
 	var req dto.ValidateLoginTokenReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		tlog.Info(ctx, "validate login token param error", "error", err.Error())
+		tlog.Error(ctx, "validate login token param error:%v", err)
 		c.JSON(http.StatusOK, dto.Failure(dto.CodeParamError, "param error"))
 		return
 	}
@@ -83,18 +73,12 @@ func ValidateLoginToken(c *gin.Context) {
 
 	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
 	if err != nil {
-		tlog.Error(ctx, "validate login token error",
-			"accountId", req.AccountId,
-			"error", err.Error(),
-		)
+		tlog.Error(ctx, "validate account:%s login token:%s error:%v", req.AccountId, req.LoginToken, err)
 		c.JSON(http.StatusInternalServerError, dto.Failure(dto.CodeTokenGenFailed, "validate login token failed"))
 		return
 	}
 
-	tlog.Debug(ctx, "validate login token",
-		"accountId", req.AccountId,
-		"valid", valid,
-	)
+	tlog.Info(ctx, "validate account:%s login token:%s ok", req.AccountId, req.LoginToken)
 
 	c.JSON(http.StatusOK, dto.Success(dto.ValidateLoginTokenAck{
 		Valid: valid,

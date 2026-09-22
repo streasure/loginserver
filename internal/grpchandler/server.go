@@ -1,4 +1,4 @@
-package rpc
+package grpchandler
 
 import (
 	"context"
@@ -10,24 +10,18 @@ import (
 	"github.com/streasure/util/ugrpc"
 
 	loginproto "github.com/streasure/protocol/loginserver"
-
-	"loginserver/internal/service"
 )
 
 // LoginGrpcServer 负责 gRPC 服务器的生命周期管理（创建、启动、销毁），
 // 业务逻辑由 LoginHandler 实现，通过组合方式注册到 gRPC 服务器。
 type LoginGrpcServer struct {
 	component.BaseComponent
-
-	server  *ugrpc.Server
-	handler *LoginHandler
+	server *ugrpc.Server
 }
 
 func NewLoginGrpcServer() *LoginGrpcServer {
 	cfg := config.GetConfig()
-	s := &LoginGrpcServer{
-		handler: NewLoginHandler(service.GetLoginService()),
-	}
+	s := &LoginGrpcServer{}
 
 	// gRPC 服务端口为 0 时按配置禁用，不创建服务器
 	if cfg.Ports.GrpcServiceAddr == 0 {
@@ -51,7 +45,7 @@ func NewLoginGrpcServer() *LoginGrpcServer {
 	)
 
 	// 注册业务 handler
-	loginproto.RegisterLoginServiceServer(s.server, s.handler)
+	loginproto.RegisterLoginServiceServer(s.server, NewLoginServer())
 	s.server.SetServingStatus("loginserver.LoginService", true)
 
 	return s

@@ -4,7 +4,6 @@ go 1.22.5
 
 require (
 	github.com/gin-gonic/gin v1.9.1
-	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.0.5
 	github.com/streasure/protocol v0.0.0
 	github.com/streasure/util v0.0.0
@@ -32,10 +31,10 @@ require (
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/joeshaw/multierror v0.0.0-20140124173710-69b34d4ec901 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/leodido/go-urn v1.2.4 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
@@ -44,6 +43,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/procfs v0.6.0 // indirect
+	github.com/spf13/cast v1.10.0 // indirect
 	github.com/streasure/treasure-slog v1.0.17 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect

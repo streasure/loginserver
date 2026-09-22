@@ -7,8 +7,9 @@ import (
 	"loginserver/internal"
 	internalcomponent "loginserver/internal/component"
 	"loginserver/internal/config"
-	_ "loginserver/internal/handler"
-	"loginserver/internal/rpc"
+	"loginserver/internal/grpchandler"
+	_ "loginserver/internal/httphandler"
+	"loginserver/internal/service"
 
 	"github.com/streasure/util/component"
 	"github.com/streasure/util/tlog"
@@ -59,8 +60,11 @@ func main() {
 	// redis
 	container.Add(internalcomponent.NewRedisComponent())
 
+	// token manager（loginToken 校验的进程内缓存，须在 rpc 之前 Init）
+	container.Add(service.GetTokenManager())
+
 	// gRPC 业务组件
-	rpcServer := rpc.NewLoginGrpcServer()
+	rpcServer := grpchandler.NewLoginGrpcServer()
 	container.Add(rpcServer)
 
 	// etcd
