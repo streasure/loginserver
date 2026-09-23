@@ -42,7 +42,7 @@ func main() {
 	// 加载配置
 	err := config.LoadConfig(*confFiles)
 	if err != nil {
-		tlog.Error(context.TODO(), "load config failed error", "error", err)
+		tlog.Error(context.TODO(), "load config failed error:%v", err)
 		return
 	}
 
@@ -70,7 +70,7 @@ func main() {
 	// etcd
 	etcdComp, err := internalcomponent.NewEtcdComponent()
 	if err != nil {
-		tlog.Error(context.TODO(), "create etcd component failed", "error", err.Error())
+		tlog.Error(context.TODO(), "create etcd component failed:%v", err)
 		return
 	}
 	container.Add(etcdComp)
@@ -83,14 +83,8 @@ func main() {
 	// pprof
 	container.Add(upprof.NewUPprofComponent(fmt.Sprintf(":%d", conf.Ports.PprofPort)))
 
-	tlog.Info(context.TODO(), "loginserver starting",
-		"belong", conf.Belong,
-		"serverType", conf.ServerType,
-		"zone", conf.Zone,
-		"serverId", conf.ServerId,
-		"httpAddr", conf.Ports.HttpAddr,
-		"grpcAddr", conf.Ports.GrpcServiceAddr,
-	)
+	tlog.Info(context.TODO(), "loginserver starting belong:%s serverType:%s zone:%s serverId:%s httpAddr:%d grpcAddr:%d",
+		conf.Belong, conf.ServerType, conf.Zone, conf.ServerId, conf.Ports.HttpAddr, conf.Ports.GrpcServiceAddr)
 
 	// 启动所有组件
 	container.Serve()
