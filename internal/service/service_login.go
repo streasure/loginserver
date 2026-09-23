@@ -29,7 +29,7 @@ func GetLoginService() *LoginService {
 func (s *LoginService) GenerateLoginToken(ctx context.Context, accountId string) (string, error) {
 	loginToken := uuid.NewUUID()
 
-	if err := rmodel.SetLoginToken(ctx, accountId, loginToken, s.loginTokenExpireSec); err != nil {
+	if err := rmodel.GetLoginTokenModel().SetLoginToken(ctx, accountId, loginToken, s.loginTokenExpireSec); err != nil {
 		return "", err
 	}
 
@@ -45,7 +45,7 @@ func (s *LoginService) ValidateLoginToken(ctx context.Context, accountId, loginT
 		return stored == loginToken, nil
 	}
 
-	storedToken, err := rmodel.GetLoginToken(ctx, accountId)
+	storedToken, err := rmodel.GetLoginTokenModel().GetLoginToken(ctx, accountId)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return false, nil
@@ -59,7 +59,7 @@ func (s *LoginService) ValidateLoginToken(ctx context.Context, accountId, loginT
 }
 
 func (s *LoginService) BindAccount(ctx context.Context, openId string, ptId int32) (string, error) {
-	accountId, err := rmodel.GetAccount(ctx, openId, ptId)
+	accountId, err := rmodel.GetAccountModel().GetAccount(ctx, openId, ptId)
 	if err != nil {
 		return "", err
 	}
@@ -68,7 +68,7 @@ func (s *LoginService) BindAccount(ctx context.Context, openId string, ptId int3
 	}
 
 	accountId = uuid.NewUUID()
-	if err := rmodel.SetAccount(ctx, openId, ptId, accountId); err != nil {
+	if err := rmodel.GetAccountModel().SetAccount(ctx, openId, ptId, accountId); err != nil {
 		return "", err
 	}
 

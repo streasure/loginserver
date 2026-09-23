@@ -5,7 +5,6 @@ package rmodel
 import (
 	"errors"
 	"loginserver/internal/config"
-	"strconv"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -21,18 +20,6 @@ func GetRedisCli() (redis.Cmdable, error) {
 		return comp, nil
 	}
 	return nil, ErrRedisUnavailable
-}
-
-// accountKey 拼接 account 绑定的 Redis key：
-// {belong}/{serverType}:{zone}:account:{openId}:{ptId}
-func accountKey(openId string, ptId int32) string {
-	return getKey("account", openId, strconv.Itoa(int(ptId)))
-}
-
-// loginTokenKey 拼接 loginToken 的 Redis key：
-// {belong}/{serverType}:{zone}:loginToken:{accountId}
-func loginTokenKey(accountId string) string {
-	return getKey("loginToken", accountId)
 }
 
 func getKey(affixArr ...string) string {

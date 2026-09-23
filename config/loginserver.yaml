@@ -8,9 +8,9 @@ ports:
   grpcServiceAddr: 10002
   pprofPort: 10003
 
-# Redis 实例表：键为实例名（组件代码固定使用 "login"），支持多实例扩展
+# Redis 实例表：键为实例名（业务侧通过 uredis.GetClient(name) 取用，rmodel 固定使用 "rdb"），支持多实例扩展
 redis:
-  login:
+  rdb:
     network: tcp
     address: "127.0.0.1:6379"
     db: 1

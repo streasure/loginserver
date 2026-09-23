@@ -8,9 +8,9 @@ import (
 	"github.com/streasure/util/uredis"
 )
 
-// NewRedisComponent 创建 Redis 组件（单实例，SceneServer 风格的函数式选项）。
-// 实例名固定为 "login"（对应 loginserver.yaml redis 段的键名）；
-// 组件自身实现 uredis.Client 接口，Init 后可直接当 Redis 客户端使用。
+// NewRedisComponent 创建 Redis 组件并注册为 uredis 全局实例。
+// 实例配置来自 loginserver.yaml 的 redis 段（键为实例名，rmodel 通过 uredis.GetClient("rdb") 取用）；
+// 组件接入容器生命周期，Init 时统一建连并 Ping 验证。
 func NewRedisComponent() *uredis.URedisComponent {
 	cfg := config.GetConfig()
 
