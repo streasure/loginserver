@@ -13,8 +13,8 @@ import (
 
 func main() {
 	target := "127.0.0.1:10002"
-	accountID := "test-account"
-	loginToken := "test-token"
+	accountID := "4605caae66d644488caf21b420fafaaa"
+	loginToken := "fb20959409dc48c1bc68838d62d496f5"
 
 	if len(os.Args) > 1 {
 		target = os.Args[1]
