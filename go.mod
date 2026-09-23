@@ -5,8 +5,8 @@ go 1.22.5
 require (
 	github.com/gin-gonic/gin v1.9.1
 	github.com/redis/go-redis/v9 v9.0.5
-	github.com/streasure/protocol v0.0.0
-	github.com/streasure/util v0.0.0
+	github.com/streasure/protocol v1.0.4
+	github.com/streasure/util v1.0.11
 	google.golang.org/grpc v1.64.0
 )
 
@@ -44,7 +44,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/procfs v0.6.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/streasure/treasure-slog v1.0.17 // indirect
+	github.com/streasure/treasure-slog v1.0.18 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	go.elastic.co/apm/module/apmgin/v2 v2.4.3 // indirect
@@ -69,10 +69,4 @@ require (
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	howett.net/plist v0.0.0-20181124034731-591f970eefbb // indirect
-)
-
-replace (
-	github.com/streasure/protocol => ../protocol
-	github.com/streasure/treasure-slog => ../treasure-slog
-	github.com/streasure/util => ../util
 )
