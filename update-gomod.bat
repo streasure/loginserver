@@ -26,7 +26,7 @@ REM ============================================================
 setlocal
 cd /d "%~dp0"
 
-set "GONOSUMDB=yofijoy.com,github.com/streasure"
+set "GONOSUMDB=github.com/streasure"
 
 echo go mod tidy ...
 go mod tidy
