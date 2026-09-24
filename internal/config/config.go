@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/streasure/protocol/enums"
 	"github.com/streasure/util/uconfig"
 	"github.com/streasure/util/uredis"
 )
@@ -30,7 +31,8 @@ type Config struct {
 	RedisMaxIdleTime  string `validate:"required"` // 连接最大空闲时间（如 "300s"），需小于 redis server 的 timeout
 	RedisMaxLifeTime  string `validate:"required"` // 连接最大生命周期（如 "3600s"），需根据 redis server 的 timeout 来设置
 
-	ServiceKey string
+	ServiceKey     string
+	LoginServerKey string
 }
 
 type Ports struct {
@@ -71,6 +73,8 @@ func LoadConfig(configFile ...string) error {
 	}
 
 	cfg.ServiceKey = cfg.Belong + "/" + cfg.ServerType + ":" + cfg.Zone
+	loginServerKey := enums.ServerType_name[int32(enums.ServerType_SERVER_TYPE_LOGINSERVER)]
+	cfg.LoginServerKey = cfg.Belong + "/" + loginServerKey + ":" + cfg.Zone
 	_defaultConfig = cfg
 	return nil
 }
