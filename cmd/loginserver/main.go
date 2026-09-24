@@ -76,7 +76,7 @@ func main() {
 	container.Add(etcdComp)
 
 	// HTTP 业务组件
-	container.Add(ugin.NewComponent(conf.Belong, fmt.Sprintf(":%d", conf.Ports.HttpAddr),
+	container.Add(ugin.NewComponent(conf.ServiceKey, fmt.Sprintf(":%d", conf.Ports.HttpAddr),
 		ugin.WithAPM(false),
 	))
 
