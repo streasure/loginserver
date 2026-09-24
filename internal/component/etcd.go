@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"loginserver/internal/config"
 
+	"github.com/streasure/protocol/enums"
 	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/uetcd"
 )
@@ -17,7 +18,8 @@ func NewEtcdComponent() (*uetcd.Component, error) {
 		return nil, fmt.Errorf("etcd endpoints is empty")
 	}
 
-	serviceKey := cfg.ServiceKey
+	loginServerKey := enums.ServerType_name[int32(enums.ServerType_SERVER_TYPE_LOGINSERVER)]
+	serviceKey := cfg.Belong + "/" + loginServerKey + ":" + cfg.Zone
 	advertiseAddr := netutil.LocalIP() + fmt.Sprintf(":%d", cfg.Ports.GrpcServiceAddr)
 
 	comp := uetcd.New(uetcd.ComponentConfig{
