@@ -21,7 +21,7 @@ type Config struct {
 	Etcd            EtcdInfo                       `validate:"required"`
 	Limits          LimitInfo                      `validate:"required"`
 	Perf            PerfInfo                       `validate:"required"`
-	Load            uload.Config                   `yaml:"load"` // 自适应准入控制（整机 CPU/内存边界），全 0 边界时组件惰性不生效
+	Load            uload.Config                   `yaml:"load"` // 自适应准入控制（整机 CPU/内存边界），随 ugin.WithLoad 接入，全 0 边界时惰性不生效
 	ReadTimeoutSec  int64                          `validate:"required"`
 	WriteTimeoutSec int64                          `validate:"required"`
 

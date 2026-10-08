@@ -17,7 +17,6 @@ import (
 	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/ugin"
-	"github.com/streasure/util/uload"
 	"github.com/streasure/util/uperf"
 	"github.com/streasure/util/upprof"
 )
@@ -84,13 +83,11 @@ func main() {
 	}
 	container.Add(etcdComp)
 
-	// 自适应准入控制：按整机 CPU/内存边界值自动对 HTTP/gRPC 限流/熔断，
-	// ugin/ugrpc 拦截链自动生效；边界全为 0 时组件惰性不生效
-	container.Add(uload.New(conf.Load))
-
-	// HTTP 业务组件
+	// HTTP 业务组件；uload 自适应准入随组件接入（边界全为 0 时惰性不生效），
+	// gin 中间件与 gRPC 拦截器共享同一状态机
 	container.Add(ugin.NewComponent(conf.ServiceKey, netutil.PortAddr(conf.Ports.HttpAddr),
 		ugin.WithAPM(false),
+		ugin.WithLoad(conf.Load),
 	))
 
 	// pprof

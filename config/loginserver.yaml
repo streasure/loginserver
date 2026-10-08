@@ -39,8 +39,8 @@ perf:
   gcPercent: 300        # GOGC 等效值（默认 100），本机压测 300 时吞吐最优
   memoryLimitPercent: 90   # 软内存上限 = 机器总内存 × 该百分比（0-100），0 = 不限制；跨机器部署免修改
 
-# 自适应准入控制（uload 组件）：按整机 CPU/内存边界值自动对 HTTP/gRPC 限流/熔断，
-# ugin/ugrpc 拦截链自动生效，业务无感知；全 0 边界时组件惰性不生效
+# 自适应准入控制（uload）：按整机 CPU/内存边界值自动对 HTTP/gRPC 限流/熔断，
+# 随 ugin.WithLoad 接入，拦截链自动生效，业务无感知；全 0 边界时惰性不生效
 load:
   cpuLimit: 85        # CPU 软边界(%)：越界持续 sustain 按超限比例丢弃请求（限流+降级），0=不启用
   memLimit: 90        # 内存软边界(%)，0=不启用
