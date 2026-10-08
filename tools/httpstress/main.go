@@ -8,7 +8,7 @@ import (
 	"net"
 	"net/http"
 	"runtime"
-	"sort"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,10 +39,8 @@ func main() {
 	fmt.Printf("warming up for %s...\n", *warmup)
 	warmupDeadline := time.Now().Add(*warmup)
 	var warmupWg sync.WaitGroup
-	for i := 0; i < *concurrency; i++ {
-		warmupWg.Add(1)
-		go func() {
-			defer warmupWg.Done()
+	for range *concurrency {
+		warmupWg.Go(func() {
 			body := []byte("{}")
 			for time.Now().Before(warmupDeadline) {
 				req, err := http.NewRequest("POST", *target, bytes.NewReader(body))
@@ -57,7 +55,7 @@ func main() {
 				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 			}
-		}()
+		})
 	}
 	warmupWg.Wait()
 	runtime.GC()
@@ -69,10 +67,8 @@ func main() {
 	deadline := time.Now().Add(*duration)
 	var wg sync.WaitGroup
 
-	for i := 0; i < *concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range *concurrency {
+		wg.Go(func() {
 			body := []byte("{}")
 			localLatencies := make([]int64, 0, 100000)
 			for time.Now().Before(deadline) {
@@ -98,19 +94,19 @@ func main() {
 			mu.Lock()
 			latencies = append(latencies, localLatencies...)
 			mu.Unlock()
-		}()
+		})
 	}
 
 	wg.Wait()
 	transport.CloseIdleConnections()
 
 	total := completed.Load() + failed.Load()
-	if total == 0 {
+	if total == 0 || len(latencies) == 0 {
 		fmt.Println("no requests completed")
 		return
 	}
 
-	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+	slices.Sort(latencies)
 	p50 := latencies[len(latencies)*50/100]
 	p95 := latencies[len(latencies)*95/100]
 	p99 := latencies[len(latencies)*99/100]

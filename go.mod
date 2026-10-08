@@ -1,6 +1,6 @@
-module loginserver
+module github.com/streasure/loginserver
 
-go 1.22.5
+go 1.26.5
 
 require (
 	github.com/gin-gonic/gin v1.9.1
@@ -70,3 +70,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	howett.net/plist v0.0.0-20181124034731-591f970eefbb // indirect
 )
+
+replace github.com/streasure/util => ../util

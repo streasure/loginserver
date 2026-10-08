@@ -5,7 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"runtime"
-	"sort"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,7 +34,7 @@ func main() {
 
 	conns := make([]*grpc.ClientConn, numConns)
 	clients := make([]loginproto.LoginServiceClient, numConns)
-	for i := 0; i < numConns; i++ {
+	for i := range numConns {
 		conn, err := grpc.NewClient(*target,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(4*1024*1024)),
@@ -55,11 +55,9 @@ func main() {
 	fmt.Printf("warming up for %s (connections=%d, workers=%d)...\n", *warmup, numConns, *concurrency)
 	warmupDeadline := time.Now().Add(*warmup)
 	var warmupWg sync.WaitGroup
-	for i := 0; i < *concurrency; i++ {
-		warmupWg.Add(1)
-		go func(idx int) {
-			defer warmupWg.Done()
-			connIdx := idx % numConns
+	for i := range *concurrency {
+		warmupWg.Go(func() {
+			connIdx := i % numConns
 			for time.Now().Before(warmupDeadline) {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				clients[connIdx].ValidateLoginToken(ctx, &loginproto.ValidateLoginTokenReq{
@@ -68,7 +66,7 @@ func main() {
 				})
 				cancel()
 			}
-		}(i)
+		})
 	}
 	warmupWg.Wait()
 	runtime.GC()
@@ -80,11 +78,9 @@ func main() {
 	deadline := time.Now().Add(*duration)
 	var wg sync.WaitGroup
 
-	for i := 0; i < *concurrency; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			connIdx := idx % numConns
+	for i := range *concurrency {
+		wg.Go(func() {
+			connIdx := i % numConns
 			localLatencies := make([]int64, 0, 100000)
 			for time.Now().Before(deadline) {
 				started := time.Now()
@@ -106,18 +102,18 @@ func main() {
 			mu.Lock()
 			latencies = append(latencies, localLatencies...)
 			mu.Unlock()
-		}(i)
+		})
 	}
 
 	wg.Wait()
 
 	total := completed.Load() + failed.Load()
-	if total == 0 {
+	if total == 0 || len(latencies) == 0 {
 		fmt.Println("no requests completed")
 		return
 	}
 
-	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+	slices.Sort(latencies)
 	p50 := latencies[len(latencies)*50/100]
 	p95 := latencies[len(latencies)*95/100]
 	p99 := latencies[len(latencies)*99/100]

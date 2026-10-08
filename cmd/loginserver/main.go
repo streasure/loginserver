@@ -4,16 +4,20 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"loginserver/internal"
-	internalcomponent "loginserver/internal/component"
-	"loginserver/internal/config"
-	"loginserver/internal/grpchandler"
-	_ "loginserver/internal/httphandler"
-	"loginserver/internal/service"
+
+	internalcomponent "github.com/streasure/loginserver/internal/component"
+
+	"github.com/streasure/loginserver/internal"
+	"github.com/streasure/loginserver/internal/config"
+	"github.com/streasure/loginserver/internal/grpchandler"
+	_ "github.com/streasure/loginserver/internal/httphandler"
+	"github.com/streasure/loginserver/internal/service"
 
 	"github.com/streasure/util/component"
+	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/ugin"
+	"github.com/streasure/util/uload"
 	"github.com/streasure/util/uperf"
 	"github.com/streasure/util/upprof"
 )
@@ -75,19 +79,25 @@ func main() {
 	}
 	container.Add(etcdComp)
 
+	// 自适应准入控制：按整机 CPU/内存边界值自动对 HTTP/gRPC 限流/熔断，
+	// ugin/ugrpc 拦截链自动生效；边界全为 0 时组件惰性不生效
+	container.Add(uload.New(conf.Load))
+
 	// HTTP 业务组件
-	container.Add(ugin.NewComponent(conf.ServiceKey, fmt.Sprintf(":%d", conf.Ports.HttpAddr),
+	container.Add(ugin.NewComponent(conf.ServiceKey, netutil.PortAddr(conf.Ports.HttpAddr),
 		ugin.WithAPM(false),
 	))
 
 	// pprof
-	container.Add(upprof.NewUPprofComponent(fmt.Sprintf(":%d", conf.Ports.PprofPort)))
+	container.Add(upprof.NewUPprofComponent(netutil.PortAddr(conf.Ports.PprofPort)))
 
 	tlog.Info(context.TODO(), "loginserver starting belong:%s serverType:%s zone:%s serverId:%s httpAddr:%d grpcAddr:%d",
 		conf.Belong, conf.ServerType, conf.Zone, conf.ServerId, conf.Ports.HttpAddr, conf.Ports.GrpcServiceAddr)
 
 	// 启动所有组件
-	container.Serve()
+	if err := container.Serve(); err != nil {
+		tlog.Error(context.TODO(), "loginserver serve failed:%v", err)
+	}
 
 	tlog.Info(context.TODO(), "loginserver stopped")
 }

@@ -38,3 +38,17 @@ limits:
 perf:
   gcPercent: 300        # GOGC 等效值（默认 100），本机压测 300 时吞吐最优
   memoryLimitPercent: 90   # 软内存上限 = 机器总内存 × 该百分比（0-100），0 = 不限制；跨机器部署免修改
+
+# 自适应准入控制（uload 组件）：按整机 CPU/内存边界值自动对 HTTP/gRPC 限流/熔断，
+# ugin/ugrpc 拦截链自动生效，业务无感知；全 0 边界时组件惰性不生效
+load:
+  cpuLimit: 85        # CPU 软边界(%)：越界持续 sustain 按超限比例丢弃请求（限流+降级），0=不启用
+  memLimit: 90        # 内存软边界(%)，0=不启用
+  cpuReject: 97       # CPU 硬边界(%)：越界持续 sustain 全部拒绝（熔断），须大于 cpuLimit，0=不启用
+  memReject: 97       # 内存硬边界(%)，须大于 memLimit，0=不启用
+  # interval: 2s      # 采样间隔（默认 2s）
+  # sustain: 3s       # 越界需持续的时长，默认 3s（防抖，避免瞬时尖峰触发）
+  # cooldown: 10s     # 熔断后最短拒绝时长（默认 10s），到期后按最新采样恢复
+  # release: 5        # 恢复回差(%)：低于边界-release 才恢复（默认 5，防抖）
+  # apiAddr: ":10004" # 负载状态查询接口监听地址（可选），GET /internal/load 返回状态 JSON
+  # apiPath: "/internal/load"

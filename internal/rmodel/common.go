@@ -3,24 +3,13 @@
 package rmodel
 
 import (
-	"errors"
-	"loginserver/internal/config"
 	"strings"
 
-	"github.com/redis/go-redis/v9"
-	"github.com/streasure/util/uredis"
+	"github.com/streasure/loginserver/internal/config"
 )
 
-// ErrRedisUnavailable Redis 客户端未就绪
-var ErrRedisUnavailable = errors.New("redis client unavailable")
-
-// GetRedisCli 返回全局 Redis 客户端（从 component 容器获取）
-func GetRedisCli() (redis.Cmdable, error) {
-	if comp := uredis.GetClient("rdb").GetRawGoRedisClient(); comp != nil {
-		return comp, nil
-	}
-	return nil, ErrRedisUnavailable
-}
+// redisName rmodel 使用的 redis 实例名（loginserver.yaml redis 段键名）
+const redisName = "rdb"
 
 func getKey(affixArr ...string) string {
 	var sb strings.Builder

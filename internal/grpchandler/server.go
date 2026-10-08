@@ -2,10 +2,11 @@ package grpchandler
 
 import (
 	"context"
-	"fmt"
-	"loginserver/internal/config"
+
+	"github.com/streasure/loginserver/internal/config"
 
 	"github.com/streasure/util/component"
+	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/ugrpc"
 
@@ -35,7 +36,7 @@ func NewLoginGrpcServer() *LoginGrpcServer {
 	// 在构造函数创建（而非 Init），etcd 组件创建时即可读取服务身份
 	s.server = ugrpc.NewServer(
 		ugrpc.WithName("grpc-server"),
-		ugrpc.WithAddr(fmt.Sprintf(":%d", cfg.Ports.GrpcServiceAddr)),
+		ugrpc.WithAddr(netutil.PortAddr(cfg.Ports.GrpcServiceAddr)),
 		ugrpc.WithBelong(cfg.Belong),
 		ugrpc.WithServerType(cfg.ServerType),
 		ugrpc.WithZone(cfg.Zone),

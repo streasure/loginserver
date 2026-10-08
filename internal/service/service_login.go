@@ -3,33 +3,31 @@ package service
 import (
 	"context"
 	"errors"
-	"loginserver/internal/config"
-	"loginserver/internal/rmodel"
-	"sync"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/streasure/loginserver/internal/config"
+	"github.com/streasure/loginserver/internal/rmodel"
+
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/uuid"
+
+	redis "github.com/redis/go-redis/v9"
 )
 
-type LoginService struct {
-	once                sync.Once
-	loginTokenExpireSec int64
-}
+// LoginService 登录相关业务逻辑。配置在进程启动时加载完成后不可变，
+// 过期时间在调用时读取，无需 Once 缓存。
+type LoginService struct{}
 
 var loginService = &LoginService{}
 
 func GetLoginService() *LoginService {
-	loginService.once.Do(func() {
-		loginService.loginTokenExpireSec = config.GetConfig().Limits.LoginTokenExpireSeconds
-	})
 	return loginService
 }
 
 func (s *LoginService) GenerateLoginToken(ctx context.Context, accountId string) (string, error) {
 	loginToken := uuid.NewUUID()
 
-	if err := rmodel.GetLoginTokenModel().SetLoginToken(ctx, accountId, loginToken, s.loginTokenExpireSec); err != nil {
+	expireSec := config.GetConfig().Limits.LoginTokenExpireSeconds
+	if err := rmodel.GetLoginTokenModel().SetLoginToken(ctx, accountId, loginToken, expireSec); err != nil {
 		return "", err
 	}
 
@@ -72,7 +70,7 @@ func (s *LoginService) BindAccount(ctx context.Context, openId string, ptId int3
 		return "", err
 	}
 
-	tlog.Info(ctx, "bind openId:%s ptId:%s accountId:%s success", openId, ptId, accountId)
+	tlog.Info(ctx, "bind openId:%s ptId:%d accountId:%s success", openId, ptId, accountId)
 
 	return accountId, nil
 }

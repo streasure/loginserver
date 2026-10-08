@@ -7,6 +7,7 @@ import (
 
 	"github.com/streasure/protocol/enums"
 	"github.com/streasure/util/uconfig"
+	"github.com/streasure/util/uload"
 	"github.com/streasure/util/uredis"
 )
 
@@ -20,11 +21,13 @@ type Config struct {
 	Etcd            EtcdInfo                       `validate:"required"`
 	Limits          LimitInfo                      `validate:"required"`
 	Perf            PerfInfo                       `validate:"required"`
+	Load            uload.Config                   `yaml:"load"` // 自适应准入控制（整机 CPU/内存边界），全 0 边界时组件惰性不生效
 	ReadTimeoutSec  int64                          `validate:"required"`
 	WriteTimeoutSec int64                          `validate:"required"`
 
 	// Redis 连接池参数（对所有实例生效）；数值 0 或时长为空表示沿用 uredis 默认值。
-	// 注意：uconfig 不支持 default tag，未配置时字段为零值，由组件构造侧兜底。
+	// 刻意不设 default 标签：uconfig 的 default 会把未配置字段填成非零值，
+	// 这里需要保留 0 语义（不覆盖 uredis 默认），由组件构造侧兜底。
 	RedisMinIdleConns int    `validate:"required"` // 最小空闲连接数
 	RedisMaxIdleConns int    `validate:"required"` // 最大空闲连接数
 	RedisMaxOpenConns int    `validate:"required"` // 最大 open 连接数（对应 go-redis PoolSize）

@@ -2,7 +2,8 @@ package component
 
 import (
 	"fmt"
-	"loginserver/internal/config"
+
+	"github.com/streasure/loginserver/internal/config"
 
 	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/uetcd"
@@ -18,7 +19,7 @@ func NewEtcdComponent() (*uetcd.Component, error) {
 	}
 
 	serviceKey := cfg.LoginServerKey
-	advertiseAddr := netutil.LocalIP() + fmt.Sprintf(":%d", cfg.Ports.GrpcServiceAddr)
+	advertiseAddr := netutil.LocalIP() + netutil.PortAddr(cfg.Ports.GrpcServiceAddr)
 
 	comp := uetcd.New(uetcd.ComponentConfig{
 		Etcd: uetcd.Config{

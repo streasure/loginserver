@@ -15,8 +15,8 @@ func main() {
 		addr = os.Args[1]
 	}
 
- openId := "test-user"
- ptId := int32(1)
+	openId := "test-user"
+	ptId := int32(1)
 	if len(os.Args) > 2 {
 		openId = os.Args[2]
 	}

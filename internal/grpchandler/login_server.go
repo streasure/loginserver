@@ -2,7 +2,8 @@ package grpchandler
 
 import (
 	"context"
-	"loginserver/internal/service"
+
+	"github.com/streasure/loginserver/internal/service"
 
 	"github.com/streasure/util/tlog"
 	"google.golang.org/grpc/codes"

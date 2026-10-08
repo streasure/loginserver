@@ -3,9 +3,9 @@ package httphandler
 import (
 	"net/http"
 
-	"loginserver/internal"
-	"loginserver/internal/pkg/dto"
-	"loginserver/internal/service"
+	"github.com/streasure/loginserver/internal"
+	"github.com/streasure/loginserver/internal/pkg/dto"
+	"github.com/streasure/loginserver/internal/service"
 
 	"github.com/gin-gonic/gin"
 	tlog "github.com/streasure/util/tlog"
@@ -15,17 +15,26 @@ import (
 // 注册所有 HTTP 路由到 ugin 全局路由表
 func init() {
 	ugin.RegisterController("/api/v1/login", &ugin.HttpMapping{Method: http.MethodPost, Controller: Login})
+	ugin.RegisterController("/api/v1/version", &ugin.HttpMapping{Method: http.MethodGet, Controller: GetVersion})
 	ugin.RegisterController("/api/v1/version", &ugin.HttpMapping{Method: http.MethodPost, Controller: GetVersion})
 	ugin.RegisterController("/api/v1/validate/token", &ugin.HttpMapping{Method: http.MethodPost, Controller: ValidateLoginToken})
+}
+
+// bindJSON 绑定并校验 JSON 请求体；失败时记录日志、写入参数错误响应并返回 false
+func bindJSON[T any](c *gin.Context, req *T) bool {
+	if err := c.ShouldBindJSON(req); err != nil {
+		tlog.Warn(c.Request.Context(), "bind request json failed path:%s err:%v", c.FullPath(), err)
+		c.JSON(http.StatusOK, dto.Failure(dto.CodeParamError, "param error"))
+		return false
+	}
+	return true
 }
 
 func Login(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	var loginReq dto.LoginReq
-	if err := c.ShouldBindJSON(&loginReq); err != nil {
-		tlog.Info(ctx, "login param error:%v", err)
-		c.JSON(http.StatusOK, dto.Failure(dto.CodeParamError, "param error"))
+	if !bindJSON(c, &loginReq) {
 		return
 	}
 
@@ -63,9 +72,7 @@ func ValidateLoginToken(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	var req dto.ValidateLoginTokenReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		tlog.Error(ctx, "validate login token param error:%v", err)
-		c.JSON(http.StatusOK, dto.Failure(dto.CodeParamError, "param error"))
+	if !bindJSON(c, &req) {
 		return
 	}
 

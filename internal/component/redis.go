@@ -3,7 +3,7 @@ package component
 import (
 	"time"
 
-	"loginserver/internal/config"
+	"github.com/streasure/loginserver/internal/config"
 
 	"github.com/streasure/util/uredis"
 )
