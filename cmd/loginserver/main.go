@@ -52,14 +52,19 @@ func main() {
 
 	conf := config.GetConfig()
 
-	// 应用运行时性能参数（GC 调优、内存软上限），须在任何组件分配大量内存前执行
-	uperf.Apply(conf.Perf.GcPercent, conf.Perf.MemoryLimitPercent)
-
 	// 创建容器
 	container := component.NewContainer()
 
-	// 组件启动顺序：etcd（注册中心）由 util 默认排在最后启动（Order 最大，销毁时最先注销），
-	// 其余组件按 Add 顺序——redis 需先于 rpc/ugin（业务组件初始化依赖 redis 客户端）
+	// 运行时性能参数（GC 调优、内存软上限）：Order 最先，Init 时先于任何业务组件
+	// 分配大量内存前应用，Destroy 时恢复应用前的运行时参数
+	container.Add(uperf.New(uperf.Config{
+		GcPercent:          conf.Perf.GcPercent,
+		MemoryLimitPercent: conf.Perf.MemoryLimitPercent,
+	}))
+
+	// 组件启动顺序：uperf Order 最先；etcd（注册中心）由 util 默认排在最后启动
+	// （Order 最大，销毁时最先注销），其余组件按 Add 顺序——redis 需先于 rpc/ugin
+	// （业务组件初始化依赖 redis 客户端）
 
 	// redis
 	container.Add(internalcomponent.NewRedisComponent())
