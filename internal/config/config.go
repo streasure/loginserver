@@ -7,7 +7,9 @@ import (
 
 	"github.com/streasure/protocol/enums"
 	"github.com/streasure/util/uconfig"
+	"github.com/streasure/util/uetcd"
 	"github.com/streasure/util/uload"
+	"github.com/streasure/util/uperf"
 	"github.com/streasure/util/uredis"
 )
 
@@ -18,9 +20,9 @@ type Config struct {
 	ServerId        string                         `validate:"required"`
 	Ports           Ports                          `validate:"required"`
 	Redis           map[string]uredis.URedisConfig `validate:"required"`
-	Etcd            EtcdInfo                       `validate:"required"`
+	Etcd            uetcd.EtcdInfo                 `validate:"required"`
 	Limits          LimitInfo                      `validate:"required"`
-	Perf            PerfInfo                       `validate:"required"`
+	Perf            uperf.Config                   `validate:"required"`
 	Load            uload.Config                   `yaml:"load"` // 自适应准入控制（整机 CPU/内存边界），随 ugin.WithLoad 接入，全 0 边界时惰性不生效
 	ReadTimeoutSec  int64                          `validate:"required"`
 	WriteTimeoutSec int64                          `validate:"required"`
@@ -44,20 +46,9 @@ type Ports struct {
 	PprofPort       int `validate:"required"`
 }
 
-type EtcdInfo struct {
-	Endpoints     []string `validate:"required"`
-	ServicePrefix string   `validate:"required"`
-	LeaseTTL      string   `default:"10s"`
-}
-
 type LimitInfo struct {
 	LoginTokenExpireSeconds int64  `default:"86400"`
 	ValidateTokenCacheTtl   string `default:"1s"`
-}
-
-type PerfInfo struct {
-	GcPercent          int `default:"100"`
-	MemoryLimitPercent int `default:"90"`
 }
 
 var _defaultConfig = &Config{}

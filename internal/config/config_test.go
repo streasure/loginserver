@@ -82,7 +82,7 @@ RedisMaxLifeTime: 3600s
 	}
 }
 
-// 未配置时字段为零值（uconfig 不支持 default tag），由组件构造侧按"0/空 = uredis 默认"兜底
+// 未配置时字段为零值（这些字段刻意不设 default tag，见 config.go 注释），由组件构造侧按"0/空 = uredis 默认"兜底
 func TestLoadRedisPoolConfigDefault(t *testing.T) {
 	if err := LoadConfig(writeTempConfig(t, baseYaml)); err != nil {
 		t.Fatalf("LoadConfig: %v", err)
@@ -95,6 +95,30 @@ func TestLoadRedisPoolConfigDefault(t *testing.T) {
 	if cfg.RedisMaxIdleTime != "" || cfg.RedisMaxLifeTime != "" {
 		t.Errorf("pool durations should be empty, got idle=%q life=%q",
 			cfg.RedisMaxIdleTime, cfg.RedisMaxLifeTime)
+	}
+}
+
+// Etcd/Perf 配置类型已抽象到 util：uetcd.EtcdInfo / uperf.Config。
+// yaml 未配置的项按类型的 default 标签填充（leaseTTL 10s、gcPercent 100、memoryLimitPercent 90）
+func TestLoadEtcdPerfDefaults(t *testing.T) {
+	if err := LoadConfig(writeTempConfig(t, baseYaml)); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	cfg := GetConfig()
+	if len(cfg.Etcd.Endpoints) != 1 || cfg.Etcd.Endpoints[0] != "http://127.0.0.1:2379" {
+		t.Errorf("Etcd.Endpoints = %v, want [http://127.0.0.1:2379]", cfg.Etcd.Endpoints)
+	}
+	if cfg.Etcd.ServicePrefix != "/services" {
+		t.Errorf("Etcd.ServicePrefix = %q, want /services", cfg.Etcd.ServicePrefix)
+	}
+	if cfg.Etcd.LeaseTTL != "10s" {
+		t.Errorf("Etcd.LeaseTTL = %q, want 10s (uetcd.EtcdInfo default)", cfg.Etcd.LeaseTTL)
+	}
+	if cfg.Perf.GcPercent != 100 {
+		t.Errorf("Perf.GcPercent = %d, want 100 (uperf.Config default)", cfg.Perf.GcPercent)
+	}
+	if cfg.Perf.MemoryLimitPercent != 90 {
+		t.Errorf("Perf.MemoryLimitPercent = %d, want 90 (uperf.Config default)", cfg.Perf.MemoryLimitPercent)
 	}
 }
 
