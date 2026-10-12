@@ -3,12 +3,14 @@
 package rmodel
 
 import (
+	"github.com/redis/go-redis/v9"
+	"github.com/streasure/util/uredis"
 	"strings"
 
 	"github.com/streasure/loginserver/internal/config"
 )
 
-// redisName rmodel 使用的 redis 实例名（loginserver.yaml redis 段键名）
+// redisName rmodel 使用的 redis 实例名（loginserver.yaml redis.instances 段键名）
 const redisName = "rdb"
 
 func getKey(affixArr ...string) string {
@@ -21,4 +23,8 @@ func getKey(affixArr ...string) string {
 	}
 
 	return sb.String()
+}
+
+func GetRedisClient() (redis.Cmdable, error) {
+	return uredis.Client(redisName)
 }

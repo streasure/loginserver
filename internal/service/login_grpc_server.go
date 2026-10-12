@@ -1,9 +1,7 @@
-package grpchandler
+package service
 
 import (
 	"context"
-
-	"github.com/streasure/loginserver/internal/service"
 
 	"github.com/streasure/util/tlog"
 	"google.golang.org/grpc/codes"
@@ -25,7 +23,7 @@ func (h *LoginServer) ValidateLoginToken(
 	ctx context.Context,
 	req *loginproto.ValidateLoginTokenReq,
 ) (*loginproto.ValidateLoginTokenAck, error) {
-	valid, err := service.GetLoginService().ValidateLoginToken(ctx, req.GetAccountId(), req.GetLoginToken())
+	valid, err := GetLoginService().ValidateLoginToken(ctx, req.GetAccountId(), req.GetLoginToken())
 	if err != nil {
 		tlog.Error(ctx, "grpc ValidateLoginToken failed accountId:%s err:%v", req.GetAccountId(), err)
 		return nil, status.Error(codes.Internal, "validate login token failed")

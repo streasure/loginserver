@@ -8,22 +8,25 @@ ports:
   grpcServiceAddr: 10002
   pprofPort: 10003
 
-# Redis 实例表：键为实例名（业务侧通过 uredis.GetClient(name) 取用，rmodel 固定使用 "rdb"），支持多实例扩展
+# Redis 配置：连接池/超时参数 + 实例表（键为实例名，业务侧通过 uredis.GetClient(name)
+# 取用，rmodel 固定使用 "rdb"），整体由 uredis.Init 一行接入组件；
+# 时长为空串、数值为 0 表示沿用 uredis 默认值（不显式覆盖）
 redis:
-  rdb:
-    network: tcp
-    address: "127.0.0.1:6379"
-    db: 1
-    password: ""
-
-# Redis 命令读写超时（秒），对所有实例生效
-readTimeoutSec: 3
-writeTimeoutSec: 3
-RedisMinIdleConns: 0  # redis的最小idle连接数
-RedisMaxIdleConns: 40 # redis的最大idle连接数
-RedisMaxOpenConns: 40 # redis的最大open连接数
-RedisMaxIdleTime: 300s # redis连接的最大idle时间
-RedisMaxLifeTime: 3600s # redis连接的最大生命周期，需要根据redis的timeout来设置
+  readTimeout: 3s      # 命令读超时
+  writeTimeout: 3s     # 命令写超时
+  # dialTimeout: 3s    # 建连超时（默认 3s）
+  # poolTimeout: 3s    # 从连接池取连接的超时（默认 3s）
+  # minIdleConns: 0    # 最小空闲连接数（默认 10×CPU）
+  maxIdleConns: 40     # 最大空闲连接数
+  poolSize: 40         # 最大 open 连接数（对应 go-redis PoolSize）
+  maxIdleTime: 300s    # 连接最大空闲时间，需小于 redis server 的 timeout
+  maxLifeTime: 3600s   # 连接最大生命周期，需根据 redis server 的 timeout 设置
+  instances:
+    rdb:
+      network: tcp
+      address: "127.0.0.1:6379"
+      db: 1
+      password: ""
 
 etcd:
   endpoints: ["http://127.0.0.1:2379"]

@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/streasure/protocol/enums"
 	"github.com/streasure/util/uconfig"
@@ -14,27 +13,18 @@ import (
 )
 
 type Config struct {
-	Belong          string                         `validate:"required"`
-	ServerType      string                         `validate:"required"`
-	Zone            string                         `validate:"required"`
-	ServerId        string                         `validate:"required"`
-	Ports           Ports                          `validate:"required"`
-	Redis           map[string]uredis.URedisConfig `validate:"required"`
-	Etcd            uetcd.EtcdInfo                 `validate:"required"`
-	Limits          LimitInfo                      `validate:"required"`
-	Perf            uperf.Config                   `validate:"required"`
-	Load            uload.Config                   `yaml:"load"` // 自适应准入控制（整机 CPU/内存边界），随 ugin.WithLoad 接入，全 0 边界时惰性不生效
-	ReadTimeoutSec  int64                          `validate:"required"`
-	WriteTimeoutSec int64                          `validate:"required"`
-
-	// Redis 连接池参数（对所有实例生效）；数值 0 或时长为空表示沿用 uredis 默认值。
-	// 刻意不设 default 标签：uconfig 的 default 会把未配置字段填成非零值，
-	// 这里需要保留 0 语义（不覆盖 uredis 默认），由组件构造侧兜底。
-	RedisMinIdleConns int    `validate:"required"` // 最小空闲连接数
-	RedisMaxIdleConns int    `validate:"required"` // 最大空闲连接数
-	RedisMaxOpenConns int    `validate:"required"` // 最大 open 连接数（对应 go-redis PoolSize）
-	RedisMaxIdleTime  string `validate:"required"` // 连接最大空闲时间（如 "300s"），需小于 redis server 的 timeout
-	RedisMaxLifeTime  string `validate:"required"` // 连接最大生命周期（如 "3600s"），需根据 redis server 的 timeout 来设置
+	Belong     string `validate:"required"`
+	ServerType string `validate:"required"`
+	Zone       string `validate:"required"`
+	ServerId   string `validate:"required"`
+	Ports      Ports  `validate:"required"`
+	// Redis redis 段完整配置（连接池/超时 + 实例连接信息），校验在 uredis.Config.Validate；
+	// 组件由 uredis.Init(conf.Redis) 一行创建并注册全局。
+	Redis  uredis.Config  `yaml:"redis" validate:"required"`
+	Etcd   uetcd.EtcdInfo `validate:"required"`
+	Limits LimitInfo      `validate:"required"`
+	Perf   uperf.Config   `validate:"required"`
+	Load   uload.Config   `yaml:"load"` // 自适应准入控制（整机 CPU/内存边界），随 ugin.WithLoad 接入，全 0 边界时惰性不生效
 
 	ServiceKey     string
 	LoginServerKey string
@@ -101,27 +91,11 @@ func validate(cfg *Config) error {
 	if cfg.Ports.GrpcServiceAddr == cfg.Ports.PprofPort {
 		return errors.New("ports.grpcServiceAddr and ports.pprofPort must differ")
 	}
-	if len(cfg.Redis) == 0 {
-		return errors.New("redis config is required")
-	}
-	for name, rc := range cfg.Redis {
-		if rc.Address == "" {
-			return fmt.Errorf("redis[%s].address is required", name)
-		}
+	if err := cfg.Redis.Validate(); err != nil {
+		return err
 	}
 	if cfg.Limits.LoginTokenExpireSeconds <= 0 {
 		return errors.New("limits.loginTokenExpireSeconds must be positive")
-	}
-	// duration 配置非空时必须可解析（格式如 "300s"、"1h"），启动早失败
-	if cfg.RedisMaxIdleTime != "" {
-		if _, err := time.ParseDuration(cfg.RedisMaxIdleTime); err != nil {
-			return fmt.Errorf("RedisMaxIdleTime(%s) invalid: %w", cfg.RedisMaxIdleTime, err)
-		}
-	}
-	if cfg.RedisMaxLifeTime != "" {
-		if _, err := time.ParseDuration(cfg.RedisMaxLifeTime); err != nil {
-			return fmt.Errorf("RedisMaxLifeTime(%s) invalid: %w", cfg.RedisMaxLifeTime, err)
-		}
 	}
 	return nil
 }

@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	"github.com/streasure/util/tlog"
-	"github.com/streasure/util/uredis"
 
 	redis "github.com/redis/go-redis/v9"
 )
@@ -29,22 +28,24 @@ func (m *AccountModel) genAccountKey(openId string, ptId int32) string {
 // GetAccount 根据 openId+ptId 获取已绑定的 accountId，未绑定时返回 ("", nil)
 func (m *AccountModel) GetAccount(ctx context.Context, openId string, ptId int32) (string, error) {
 	key := m.genAccountKey(openId, ptId)
-	return uredis.Do(redisName, func(cli redis.Cmdable) (string, error) {
-		accountId, err := cli.Get(ctx, key).Result()
-		if err != nil {
-			if errors.Is(err, redis.Nil) {
-				return "", nil
-			}
-			return "", err
+	cli, err := GetRedisClient()
+	if err != nil {
+		return "", err
+	}
+	accountId, err := cli.Get(ctx, key).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return "", nil
 		}
-		return accountId, nil
-	})
+		return "", err
+	}
+	return accountId, nil
 }
 
 // SetAccount 绑定 openId+ptId → accountId，永不过期
 func (m *AccountModel) SetAccount(ctx context.Context, openId string, ptId int32, accountId string) error {
 	key := m.genAccountKey(openId, ptId)
-	cli, err := uredis.Client(redisName)
+	cli, err := GetRedisClient()
 	if err != nil {
 		return err
 	}

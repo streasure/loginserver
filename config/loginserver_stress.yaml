@@ -1,0 +1,50 @@
+# 压测专用配置：与 loginserver.yaml 一致，仅关闭非业务检测/防护，用于测量极限性能
+# - uload 自适应准入全 0（不限流、不熔断）
+# 搭配 config/tlog_stress.yaml（仅 error 级日志）使用
+belong: "default"
+serverType: "LoginServer"
+zone: "default"
+serverId: "loginserver-1"
+
+ports:
+  httpAddr: 10001
+  grpcServiceAddr: 10002
+  pprofPort: 10003
+
+# Redis 配置：连接池/超时参数 + 实例表（键为实例名，业务侧通过 uredis.GetClient(name)
+# 取用，rmodel 固定使用 "rdb"），整体由 uredis.Init 一行接入组件；
+# 时长为空串、数值为 0 表示沿用 uredis 默认值（不显式覆盖）
+redis:
+  readTimeout: 3s      # 命令读超时
+  writeTimeout: 3s     # 命令写超时
+  maxIdleConns: 40     # 最大空闲连接数
+  poolSize: 40         # 最大 open 连接数（对应 go-redis PoolSize）
+  maxIdleTime: 300s    # 连接最大空闲时间，需小于 redis server 的 timeout
+  maxLifeTime: 3600s   # 连接最大生命周期，需根据 redis server 的 timeout 设置
+  instances:
+    rdb:
+      network: tcp
+      address: "127.0.0.1:6379"
+      db: 1
+      password: ""
+
+etcd:
+  endpoints: ["http://127.0.0.1:2379"]
+  servicePrefix: "/services"
+  leaseTTL: "10s"
+
+limits:
+  loginTokenExpireSeconds: 86400
+  validateTokenCacheTtl: "1s"
+
+# 运行时性能调优（进程启动时应用一次）
+perf:
+  gcPercent: 300        # GOGC 等效值（默认 100），本机压测 300 时吞吐最优
+  memoryLimitPercent: 90   # 软内存上限 = 机器总内存 × 该百分比（0-100），0 = 不限制
+
+# 压测时 uload 全 0：惰性不生效（不限流、不熔断）
+load:
+  cpuLimit: 0
+  memLimit: 0
+  cpuReject: 0
+  memReject: 0

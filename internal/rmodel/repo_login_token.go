@@ -5,9 +5,6 @@ import (
 	"time"
 
 	"github.com/streasure/util/tlog"
-	"github.com/streasure/util/uredis"
-
-	redis "github.com/redis/go-redis/v9"
 )
 
 type LoginTokenModel struct {
@@ -28,7 +25,7 @@ func (m *LoginTokenModel) genLoginTokenKey(accountId string) string {
 // SetLoginToken 写入 loginToken，带过期时间
 func (m *LoginTokenModel) SetLoginToken(ctx context.Context, accountId, token string, expireSeconds int64) error {
 	key := m.genLoginTokenKey(accountId)
-	cli, err := uredis.Client(redisName)
+	cli, err := GetRedisClient()
 	if err != nil {
 		return err
 	}
@@ -42,12 +39,14 @@ func (m *LoginTokenModel) SetLoginToken(ctx context.Context, accountId, token st
 // GetLoginToken 读取 loginToken，key 不存在时返回空串和 redis.Nil
 func (m *LoginTokenModel) GetLoginToken(ctx context.Context, accountId string) (string, error) {
 	key := m.genLoginTokenKey(accountId)
-	return uredis.Do(redisName, func(cli redis.Cmdable) (string, error) {
-		token, err := cli.Get(ctx, key).Result()
-		if err != nil {
-			tlog.Debug(ctx, "redis get account:%s login token err:%v", accountId, err)
-			return "", err
-		}
-		return token, nil
-	})
+	cli, err := GetRedisClient()
+	if err != nil {
+		return "", err
+	}
+	token, err := cli.Get(ctx, key).Result()
+	if err != nil {
+		tlog.Debug(ctx, "redis get account:%s login token err:%v", accountId, err)
+		return "", err
+	}
+	return token, nil
 }

@@ -72,6 +72,7 @@ func main() {
 	runtime.GC()
 
 	var completed, failed, totalLatencyNs atomic.Int64
+	var printedErr atomic.Bool
 	latencies := make([]int64, 0, 5000000)
 	var mu sync.Mutex
 
@@ -95,6 +96,9 @@ func main() {
 				localLatencies = append(localLatencies, lat)
 				if callErr != nil {
 					failed.Add(1)
+					if printedErr.CompareAndSwap(false, true) {
+						fmt.Printf("first error: %v\n", callErr)
+					}
 				} else {
 					completed.Add(1)
 				}

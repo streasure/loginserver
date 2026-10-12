@@ -9,7 +9,6 @@ import (
 
 	"github.com/streasure/loginserver/internal"
 	"github.com/streasure/loginserver/internal/config"
-	"github.com/streasure/loginserver/internal/grpchandler"
 	_ "github.com/streasure/loginserver/internal/httphandler"
 	"github.com/streasure/loginserver/internal/service"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/streasure/util/ugin"
 	"github.com/streasure/util/uperf"
 	"github.com/streasure/util/upprof"
+	"github.com/streasure/util/uredis"
 )
 
 var (
@@ -65,14 +65,15 @@ func main() {
 	// （Order 最大，销毁时最先注销），其余组件按 Add 顺序——redis 需先于 rpc/ugin
 	// （业务组件初始化依赖 redis 客户端）
 
-	// redis
-	container.Add(internalcomponent.NewRedisComponent())
+	// redis：配置解析/校验在 uredis.Config，此处一行创建并注册全局实例
+	// （rmodel 经 uredis.GetClient("rdb") 取用）
+	container.Add(uredis.Init(conf.Redis))
 
 	// token manager（loginToken 校验的进程内缓存，须在 rpc 之前 Init）
 	container.Add(service.GetTokenManager())
 
 	// gRPC 业务组件
-	rpcServer := grpchandler.NewLoginGrpcServer()
+	rpcServer := service.NewLoginGrpcServer()
 	container.Add(rpcServer)
 
 	// etcd

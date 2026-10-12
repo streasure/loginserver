@@ -7,6 +7,7 @@ require (
 	github.com/redis/go-redis/v9 v9.0.5
 	github.com/streasure/protocol v1.0.4
 	github.com/streasure/util v1.0.11
+	golang.org/x/sync v0.24.0
 	google.golang.org/grpc v1.67.0
 )
 
@@ -72,6 +73,6 @@ require (
 )
 
 replace (
-	github.com/streasure/util => ../util
 	github.com/streasure/treasure-slog => ../treasure-slog
+	github.com/streasure/util => ../util
 )

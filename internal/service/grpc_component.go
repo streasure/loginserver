@@ -1,8 +1,7 @@
-package grpchandler
+package service
 
 import (
 	"context"
-
 	"github.com/streasure/loginserver/internal/config"
 
 	"github.com/streasure/util/component"
@@ -35,14 +34,14 @@ func NewLoginGrpcServer() *LoginGrpcServer {
 	// 对外通告地址（etcd 注册用）通过 server.AdvertiseAddr() 自动拼接本机 IP。
 	// 在构造函数创建（而非 Init），etcd 组件创建时即可读取服务身份
 	s.server = ugrpc.NewServer(
-		ugrpc.WithName("grpc-server"),
+		ugrpc.WithName("login-server"),
 		ugrpc.WithAddr(netutil.PortAddr(cfg.Ports.GrpcServiceAddr)),
 		ugrpc.WithBelong(cfg.Belong),
 		ugrpc.WithServerType(cfg.ServerType),
 		ugrpc.WithZone(cfg.Zone),
 		ugrpc.WithServerId(cfg.ServerId),
 		ugrpc.WithHealth(true),
-		ugrpc.WithAPM(false),
+		ugrpc.WithAPM(false), // 与 HTTP 侧一致，关闭 APM 全链路追踪
 	)
 
 	// 注册业务 handler
@@ -50,12 +49,6 @@ func NewLoginGrpcServer() *LoginGrpcServer {
 	s.server.SetServingStatus("loginserver.LoginService", true)
 
 	return s
-}
-
-// GrpcServer 返回内部通用 gRPC 服务器（gRPC 服务禁用时为 nil），
-// 供 etcd 组件读取服务身份（ServiceKey/ServerId）与通告地址（AdvertiseAddr）
-func (s *LoginGrpcServer) GrpcServer() *ugrpc.Server {
-	return s.server
 }
 
 func (s *LoginGrpcServer) Start() error {

@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// 基础配置：满足 validate 必填项，Redis 连接池参数由各用例追加
-const baseYaml = `
+// 配置头部（满足 validate 必填项）；redis 段由各用例组合（baseYaml 为默认组合）
+const headYaml = `
 belong: "default"
 serverType: "LoginServer"
 zone: "default"
@@ -20,12 +20,6 @@ ports:
   grpcServiceAddr: 10002
   pprofPort: 10003
 
-redis:
-  login:
-    network: tcp
-    address: "127.0.0.1:6379"
-    db: 1
-
 etcd:
   endpoints: ["http://127.0.0.1:2379"]
   servicePrefix: "/services"
@@ -33,10 +27,22 @@ etcd:
 limits:
   loginTokenExpireSeconds: 86400
   validateTokenCacheTtl: "1s"
-
-readTimeoutSec: 3
-writeTimeoutSec: 3
 `
+
+// 默认 redis 段：实例 + 读写超时（连接池参数未配置 → 0/空 = uredis 默认值）
+const redisYaml = `
+redis:
+  readTimeout: 3s
+  writeTimeout: 3s
+  instances:
+    login:
+      network: tcp
+      address: "127.0.0.1:6379"
+      db: 1
+`
+
+// baseYaml 满足 validate 必填项的完整配置
+const baseYaml = headYaml + redisYaml
 
 func writeTempConfig(t *testing.T, content string) string {
 	t.Helper()
@@ -47,55 +53,75 @@ func writeTempConfig(t *testing.T, content string) string {
 	return path
 }
 
-// 显式配置的连接池参数应原样解析，duration 字符串应可被 ParseDuration 解析
+// 显式配置的 redis 段应原样解析到 uredis.Config（实例连接信息 + 连接池/超时参数）
 func TestLoadRedisPoolConfigExplicit(t *testing.T) {
-	yaml := baseYaml + `
-RedisMinIdleConns: 2
-RedisMaxIdleConns: 40
-RedisMaxOpenConns: 40
-RedisMaxIdleTime: 300s
-RedisMaxLifeTime: 3600s
+	yaml := headYaml + `
+redis:
+  readTimeout: 5s
+  writeTimeout: 6s
+  minIdleConns: 2
+  maxIdleConns: 40
+  poolSize: 40
+  maxIdleTime: 300s
+  maxLifeTime: 3600s
+  instances:
+    login:
+      network: tcp
+      address: "127.0.0.1:6379"
+      db: 1
 `
 	if err := LoadConfig(writeTempConfig(t, yaml)); err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	cfg := GetConfig()
-	if cfg.RedisMinIdleConns != 2 {
-		t.Errorf("RedisMinIdleConns = %d, want 2", cfg.RedisMinIdleConns)
+	if cfg.Redis.MinIdleConns != 2 {
+		t.Errorf("Redis.MinIdleConns = %d, want 2", cfg.Redis.MinIdleConns)
 	}
-	if cfg.RedisMaxIdleConns != 40 {
-		t.Errorf("RedisMaxIdleConns = %d, want 40", cfg.RedisMaxIdleConns)
+	if cfg.Redis.MaxIdleConns != 40 {
+		t.Errorf("Redis.MaxIdleConns = %d, want 40", cfg.Redis.MaxIdleConns)
 	}
-	if cfg.RedisMaxOpenConns != 40 {
-		t.Errorf("RedisMaxOpenConns = %d, want 40", cfg.RedisMaxOpenConns)
+	if cfg.Redis.PoolSize != 40 {
+		t.Errorf("Redis.PoolSize = %d, want 40", cfg.Redis.PoolSize)
+	}
+	if cfg.Redis.ReadTimeout != "5s" || cfg.Redis.WriteTimeout != "6s" {
+		t.Errorf("Redis read/writeTimeout = %q/%q, want 5s/6s",
+			cfg.Redis.ReadTimeout, cfg.Redis.WriteTimeout)
 	}
 	for _, d := range []struct{ name, val string }{
-		{"RedisMaxIdleTime", cfg.RedisMaxIdleTime},
-		{"RedisMaxLifeTime", cfg.RedisMaxLifeTime},
+		{"MaxIdleTime", cfg.Redis.MaxIdleTime},
+		{"MaxLifeTime", cfg.Redis.MaxLifeTime},
 	} {
 		parsed, err := time.ParseDuration(d.val)
 		if err != nil {
-			t.Fatalf("%s = %q, ParseDuration error: %v", d.name, d.val, err)
+			t.Fatalf("Redis.%s = %q, ParseDuration error: %v", d.name, d.val, err)
 		}
 		if parsed <= 0 {
-			t.Errorf("%s = %q, want positive duration", d.name, d.val)
+			t.Errorf("Redis.%s = %q, want positive duration", d.name, d.val)
 		}
+	}
+	inst, ok := cfg.Redis.Instances["login"]
+	if !ok || inst.Address != "127.0.0.1:6379" || inst.DB != 1 {
+		t.Errorf("Redis.Instances[login] = %+v, want address/db parsed", inst)
 	}
 }
 
-// 未配置时字段为零值（这些字段刻意不设 default tag，见 config.go 注释），由组件构造侧按"0/空 = uredis 默认"兜底
+// 未配置的连接池参数为零值（0/空 = uredis 默认，由 uredis.Config.toOptions 不覆盖）
 func TestLoadRedisPoolConfigDefault(t *testing.T) {
 	if err := LoadConfig(writeTempConfig(t, baseYaml)); err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	cfg := GetConfig()
-	if cfg.RedisMinIdleConns != 0 || cfg.RedisMaxIdleConns != 0 || cfg.RedisMaxOpenConns != 0 {
-		t.Errorf("pool conns should be zero, got min=%d maxIdle=%d maxOpen=%d",
-			cfg.RedisMinIdleConns, cfg.RedisMaxIdleConns, cfg.RedisMaxOpenConns)
+	if cfg.Redis.MinIdleConns != 0 || cfg.Redis.MaxIdleConns != 0 || cfg.Redis.PoolSize != 0 {
+		t.Errorf("pool conns should be zero, got min=%d maxIdle=%d poolSize=%d",
+			cfg.Redis.MinIdleConns, cfg.Redis.MaxIdleConns, cfg.Redis.PoolSize)
 	}
-	if cfg.RedisMaxIdleTime != "" || cfg.RedisMaxLifeTime != "" {
+	if cfg.Redis.MaxIdleTime != "" || cfg.Redis.MaxLifeTime != "" {
 		t.Errorf("pool durations should be empty, got idle=%q life=%q",
-			cfg.RedisMaxIdleTime, cfg.RedisMaxLifeTime)
+			cfg.Redis.MaxIdleTime, cfg.Redis.MaxLifeTime)
+	}
+	if cfg.Redis.ReadTimeout != "3s" || cfg.Redis.WriteTimeout != "3s" {
+		t.Errorf("Redis read/writeTimeout = %q/%q, want 3s/3s",
+			cfg.Redis.ReadTimeout, cfg.Redis.WriteTimeout)
 	}
 }
 
@@ -146,12 +172,51 @@ perf:
 	}
 }
 
-// duration 格式非法时启动应报错（validate 早失败）
-func TestLoadRedisPoolConfigInvalidDuration(t *testing.T) {
-	cases := []string{"RedisMaxIdleTime: abc\n", "RedisMaxLifeTime: 100\n"} // 100 无单位，ParseDuration 失败
-	for _, extra := range cases {
-		if err := LoadConfig(writeTempConfig(t, baseYaml+extra)); err == nil {
-			t.Errorf("LoadConfig with %q should fail, got nil", extra)
-		}
+// redis 配置非法时启动应报错（validate 下沉到 uredis.Config.Validate，早失败）
+func TestLoadRedisConfigInvalid(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "maxIdleTime without format",
+			yaml: headYaml + `
+redis:
+  maxIdleTime: abc
+  instances:
+    login:
+      address: "127.0.0.1:6379"
+`,
+		},
+		{
+			name: "maxLifeTime without unit",
+			yaml: headYaml + `
+redis:
+  maxLifeTime: 100
+  instances:
+    login:
+      address: "127.0.0.1:6379"
+`,
+		},
+		{
+			name: "missing instances",
+			yaml: headYaml,
+		},
+		{
+			name: "instance missing address",
+			yaml: headYaml + `
+redis:
+  instances:
+    login:
+      db: 1
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := LoadConfig(writeTempConfig(t, tc.yaml)); err == nil {
+				t.Error("LoadConfig should fail, got nil")
+			}
+		})
 	}
 }
