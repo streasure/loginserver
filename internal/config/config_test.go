@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,6 +120,29 @@ func TestLoadEtcdPerfDefaults(t *testing.T) {
 	}
 	if cfg.Perf.MemoryLimitPercent != 90 {
 		t.Errorf("Perf.MemoryLimitPercent = %d, want 90 (uperf.Config default)", cfg.Perf.MemoryLimitPercent)
+	}
+}
+
+// 显式配置的 perf/etcd 项不能被 default 覆盖（uconfig 键查找须与 mapstructure 大小写一致）
+func TestLoadEtcdPerfExplicit(t *testing.T) {
+	yaml := strings.Replace(baseYaml, `  servicePrefix: "/services"`, `  servicePrefix: "/services"
+  leaseTTL: "30s"`, 1) + `
+perf:
+  gcPercent: 300
+  memoryLimitPercent: 85
+`
+	if err := LoadConfig(writeTempConfig(t, yaml)); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	cfg := GetConfig()
+	if cfg.Perf.GcPercent != 300 {
+		t.Errorf("Perf.GcPercent = %d, want explicit 300", cfg.Perf.GcPercent)
+	}
+	if cfg.Perf.MemoryLimitPercent != 85 {
+		t.Errorf("Perf.MemoryLimitPercent = %d, want explicit 85", cfg.Perf.MemoryLimitPercent)
+	}
+	if cfg.Etcd.LeaseTTL != "30s" {
+		t.Errorf("Etcd.LeaseTTL = %q, want explicit 30s", cfg.Etcd.LeaseTTL)
 	}
 }
 

@@ -71,4 +71,7 @@ require (
 	howett.net/plist v0.0.0-20181124034731-591f970eefbb // indirect
 )
 
-replace github.com/streasure/util => ../util
+replace (
+	github.com/streasure/util => ../util
+	github.com/streasure/treasure-slog => ../treasure-slog
+)
