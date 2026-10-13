@@ -15,6 +15,13 @@ pprof（10003）、负载采样 API（10004）。
 启动：
 
 ```bash
+scripts\start.bat                                                    # 构建并以常规配置启动
+scripts\start.bat config\loginserver_stress.yaml config\tlog_stress.yaml   # 压测配置
+```
+
+或直接：
+
+```bash
 loginserver.exe -conf config\loginserver.yaml -logger config\tlog.yaml
 ```
 
@@ -41,7 +48,9 @@ loginserver.exe -conf config\loginserver.yaml -logger config\tlog.yaml
 | `-d` | 压测时长（默认 10s） |
 | `-warmup` | 预热时长（默认 2s，预热不计入统计） |
 
-输出整体与每个接口的 completed/failed/rps/avg/p50/p95/p99/p99.9/max 延迟。
+输出整体与每个接口的 ok（2xx）/bad（非 2xx，如准入 503）/failed（传输失败）与
+rps/avg/p50/p95/p99/p99.9/max 延迟；压测时长 ≥ 30s 时每 30s 输出一行 progress
+（累计量与区间吞吐），用于长时压测观察趋势。
 
 `tools/grpcstress` —— gRPC 压测客户端（ValidateLoginToken）：
 

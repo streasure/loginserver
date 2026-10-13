@@ -39,7 +39,7 @@ func selectEndpoints(spec string) ([]endpoint, error) {
 	reg := registry()
 	seen := make(map[string]bool)
 	out := make([]endpoint, 0, len(defaultOrder))
-	for _, n := range strings.Split(spec, ",") {
+	for n := range strings.SplitSeq(spec, ",") {
 		n = strings.TrimSpace(n)
 		if n == "" || seen[n] {
 			continue
@@ -97,22 +97,23 @@ func primeValidate(client *http.Client, base string, eps []endpoint) {
 }
 
 type epStat struct {
-	completed, failed, totalNs atomic.Int64
+	completed, bad, failed, totalNs atomic.Int64
 }
 
-func doRequest(client *http.Client, url, body string) error {
+// doRequest 返回响应状态码（收到响应时），transport 层错误返回 0
+func doRequest(client *http.Client, url, body string) (int, error) {
 	req, err := http.NewRequest("POST", url, bytes.NewReader([]byte(body)))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	return nil
+	return resp.StatusCode, nil
 }
 
 // runPhase 在 deadline 前按 worker 轮询各自起点分发到各接口；
@@ -132,7 +133,8 @@ func runPhase(client *http.Client, base string, eps []endpoint, concurrency int,
 				i := (startIdx + j) % len(eps)
 				ep := &eps[i]
 				started := time.Now()
-				if err := doRequest(client, base+ep.path, ep.body); err != nil {
+				status, err := doRequest(client, base+ep.path, ep.body)
+				if err != nil {
 					if stats != nil {
 						stats[i].failed.Add(1)
 					}
@@ -142,8 +144,12 @@ func runPhase(client *http.Client, base string, eps []endpoint, concurrency int,
 					continue
 				}
 				latNs := time.Since(started).Nanoseconds()
+				if status >= 200 && status < 300 {
+					stats[i].completed.Add(1)
+				} else {
+					stats[i].bad.Add(1)
+				}
 				stats[i].totalNs.Add(latNs)
-				stats[i].completed.Add(1)
 				local[i] = append(local[i], latNs)
 			}
 			if stats != nil {
@@ -158,9 +164,9 @@ func runPhase(client *http.Client, base string, eps []endpoint, concurrency int,
 	wg.Wait()
 }
 
-func summarize(label, path string, completed, failed int64, lat []int64, duration time.Duration) {
+func summarize(label, path string, completed, bad, failed int64, lat []int64, duration time.Duration) {
 	slices.Sort(lat)
-	total := completed + failed
+	total := completed + bad + failed
 	if total == 0 || len(lat) == 0 {
 		fmt.Printf("%-10s %-24s no requests completed\n", label, path)
 		return
@@ -178,10 +184,40 @@ func summarize(label, path string, completed, failed int64, lat []int64, duratio
 	}
 	avgMs := float64(totalNs) / float64(len(lat)) / float64(time.Millisecond)
 	rps := float64(completed) / duration.Seconds()
-	fmt.Printf("%-10s %-24s completed=%-7d failed=%-5d rps=%-7.0f avg=%6.2fms p50=%6.2fms p95=%6.2fms p99=%6.2fms p99.9=%6.2fms max=%7.2fms\n",
-		label, path, completed, failed, rps, avgMs,
+	fmt.Printf("%-10s %-24s ok=%-7d bad=%-7d failed=%-5d rps=%-7.0f avg=%6.2fms p50=%6.2fms p95=%6.2fms p99=%6.2fms p99.9=%6.2fms max=%7.2fms\n",
+		label, path, completed, bad, failed, rps, avgMs,
 		pct(50, 100), pct(95, 100), pct(99, 100), pct(999, 1000),
 		float64(lat[len(lat)-1])/float64(time.Millisecond))
+}
+
+// startProgress 每 30s 打印一次累计与区间吞吐，用于长时压测观察趋势；返回停止函数
+func startProgress(stats []epStat) (stop func()) {
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		var n int64
+		var prevOK int64
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				n += 30
+				var ok, bad, failed int64
+				for i := range stats {
+					ok += stats[i].completed.Load()
+					bad += stats[i].bad.Load()
+					failed += stats[i].failed.Load()
+				}
+				fmt.Printf("progress t=%ds ok=%d(+%.0f/s) bad=%d failed=%d\n",
+					n, ok, float64(ok-prevOK)/30, bad, failed)
+				prevOK = ok
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
 }
 
 func main() {
@@ -231,20 +267,23 @@ func main() {
 	stats := make([]epStat, len(eps))
 	lat := make([][]int64, len(eps))
 	var latMu sync.Mutex
+	stopProgress := startProgress(stats)
 	runPhase(client, baseURL, eps, *concurrency, time.Now().Add(*duration), stats, &latMu, lat)
+	stopProgress()
 	transport.CloseIdleConnections()
 
 	var all []int64
-	var sumCompleted, sumFailed int64
+	var sumCompleted, sumBad, sumFailed int64
 	for i := range eps {
 		all = append(all, lat[i]...)
 		sumCompleted += stats[i].completed.Load()
+		sumBad += stats[i].bad.Load()
 		sumFailed += stats[i].failed.Load()
 	}
 	fmt.Println()
-	summarize("[overall]", "all endpoints", sumCompleted, sumFailed, all, *duration)
+	summarize("[overall]", "all endpoints", sumCompleted, sumBad, sumFailed, all, *duration)
 	for i := range eps {
 		summarize("["+eps[i].name+"]", eps[i].path,
-			stats[i].completed.Load(), stats[i].failed.Load(), lat[i], *duration)
+			stats[i].completed.Load(), stats[i].bad.Load(), stats[i].failed.Load(), lat[i], *duration)
 	}
 }

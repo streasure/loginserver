@@ -1,4 +1,8 @@
 @echo off
 cd /d "%~dp0\.."
 go build -o loginserver.exe .\cmd\loginserver
-loginserver.exe -conf config\loginserver.yaml -logger config\tlog.yaml
+set CONF=%1
+set LOGGER=%2
+if "%CONF%"=="" set CONF=config\loginserver.yaml
+if "%LOGGER%"=="" set LOGGER=config\tlog.yaml
+loginserver.exe -conf %CONF% -logger %LOGGER%
