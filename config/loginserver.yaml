@@ -76,3 +76,4 @@ acl:
   cacheTtl: 5m          # 缓存条目 TTL（redis 数据丢失/写失败时脏数据兜底上界）
   genRefresh: 2s        # 本地版本快照刷新周期（跨节点缓存脏数据窗口上界）
   adminToken: "loginserver-admin"   # 管理接口鉴权：请求头 X-Admin-Token 期望值
+  trustedProxies: []    # 信任的反代 IP/CIDR（防 X-Forwarded-For 伪造）；直连部署保持空，反代后配置如 ["10.0.0.0/8"]

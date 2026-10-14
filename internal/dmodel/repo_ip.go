@@ -13,6 +13,7 @@ type WhitelistIP struct {
 	ID        uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
 	IP        string    `gorm:"column:ip;size:45" json:"ip"`
 	Remark    string    `gorm:"column:remark;size:255" json:"remark"`
+	Operator  string    `gorm:"column:operator;size:64" json:"operator"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -24,6 +25,7 @@ type BlacklistIP struct {
 	ID        uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
 	IP        string    `gorm:"column:ip;size:45" json:"ip"`
 	Remark    string    `gorm:"column:remark;size:255" json:"remark"`
+	Operator  string    `gorm:"column:operator;size:64" json:"operator"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -38,8 +40,8 @@ func normalizeIP(ip string) (string, error) {
 	return parsed.String(), nil
 }
 
-// AddWhitelistIP 新增白名单 IP（按 ip 唯一键 upsert，重复提交更新备注）
-func AddWhitelistIP(ctx context.Context, ip, remark string) error {
+// AddWhitelistIP 新增白名单 IP（按 ip 唯一键 upsert，重复提交更新备注与操作者）
+func AddWhitelistIP(ctx context.Context, ip, remark, operator string) error {
 	ip, err := normalizeIP(ip)
 	if err != nil {
 		return err
@@ -50,8 +52,8 @@ func AddWhitelistIP(ctx context.Context, ip, remark string) error {
 	}
 	return db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "ip"}},
-		DoUpdates: clause.AssignmentColumns([]string{"remark"}),
-	}).Create(&WhitelistIP{IP: ip, Remark: remark}).Error
+		DoUpdates: clause.AssignmentColumns([]string{"remark", "operator"}),
+	}).Create(&WhitelistIP{IP: ip, Remark: remark, Operator: operator}).Error
 }
 
 // DelWhitelistIP 删除白名单 IP，返回影响行数
@@ -85,8 +87,8 @@ func HasWhitelistIP(ctx context.Context, ip string) (bool, error) {
 	return n > 0, nil
 }
 
-// AddBlacklistIP 新增黑名单 IP（按 ip 唯一键 upsert，重复提交更新备注）
-func AddBlacklistIP(ctx context.Context, ip, remark string) error {
+// AddBlacklistIP 新增黑名单 IP（按 ip 唯一键 upsert，重复提交更新备注与操作者）
+func AddBlacklistIP(ctx context.Context, ip, remark, operator string) error {
 	ip, err := normalizeIP(ip)
 	if err != nil {
 		return err
@@ -97,8 +99,8 @@ func AddBlacklistIP(ctx context.Context, ip, remark string) error {
 	}
 	return db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "ip"}},
-		DoUpdates: clause.AssignmentColumns([]string{"remark"}),
-	}).Create(&BlacklistIP{IP: ip, Remark: remark}).Error
+		DoUpdates: clause.AssignmentColumns([]string{"remark", "operator"}),
+	}).Create(&BlacklistIP{IP: ip, Remark: remark, Operator: operator}).Error
 }
 
 // DelBlacklistIP 删除黑名单 IP，返回影响行数

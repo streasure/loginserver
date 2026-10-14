@@ -11,13 +11,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// grpc_admin：模拟 sgate 调用 loginserver 的 ACL gRPC 接口（黑名单 IP / 封禁角色）
+// grpc_admin：模拟 sgate 调用 loginserver 的 ACL gRPC 接口（黑名单 IP / 封禁角色 增删）
 //
 //	go run ./tools/grpc_admin -mode blacklist -ip 1.2.3.4 -remark drill
+//	go run ./tools/grpc_admin -mode remove-blacklist -ip 1.2.3.4
 //	go run ./tools/grpc_admin -mode banrole -role <accountId> -reason drill
+//	go run ./tools/grpc_admin -mode remove-banrole -role <accountId>
 func main() {
 	addr := flag.String("addr", "127.0.0.1:10002", "loginserver grpc address")
-	mode := flag.String("mode", "blacklist", "blacklist | banrole")
+	mode := flag.String("mode", "blacklist", "blacklist | remove-blacklist | banrole | remove-banrole")
 	ip := flag.String("ip", "", "blacklist ip")
 	remark := flag.String("remark", "", "blacklist remark")
 	role := flag.String("role", "", "banned role id (accountId)")
@@ -47,6 +49,16 @@ func main() {
 			return
 		}
 		fmt.Printf("added: %v\n", ack.Added)
+	case "remove-blacklist":
+		fmt.Printf("RemoveBlacklistIP addr=%s ip=%s\n", *addr, *ip)
+		ack, err := client.RemoveBlacklistIP(ctx, &loginproto.RemoveBlacklistIPReq{
+			Ip: *ip, Operator: *operator,
+		})
+		if err != nil {
+			fmt.Printf("error: %v\n", err)
+			return
+		}
+		fmt.Printf("removed: %v\n", ack.Removed)
 	case "banrole":
 		fmt.Printf("AddBannedRole addr=%s roleId=%s reason=%s\n", *addr, *role, *reason)
 		ack, err := client.AddBannedRole(ctx, &loginproto.AddBannedRoleReq{
@@ -57,6 +69,16 @@ func main() {
 			return
 		}
 		fmt.Printf("added: %v\n", ack.Added)
+	case "remove-banrole":
+		fmt.Printf("RemoveBannedRole addr=%s roleId=%s\n", *addr, *role)
+		ack, err := client.RemoveBannedRole(ctx, &loginproto.RemoveBannedRoleReq{
+			RoleId: *role, Operator: *operator,
+		})
+		if err != nil {
+			fmt.Printf("error: %v\n", err)
+			return
+		}
+		fmt.Printf("removed: %v\n", ack.Removed)
 	default:
 		fmt.Printf("unknown mode: %s\n", *mode)
 	}

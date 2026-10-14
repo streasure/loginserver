@@ -31,7 +31,10 @@ loginserver.exe -conf config\loginserver.yaml -logger config\tlog.yaml
 `db` 段由 `ugorm.Config` 解析（`configs` 组织实例，`maxIdleConns`/`maxOpenConns`/
 `maxIdleSeconds`/`maxLifeSeconds` 为全局池参数），形态与业务参考配置一致，
 详见 util 文档 ugorm 章节。`acl` 段为黑白名单/封禁角色的缓存与管理接口配置
-（`cacheTtl` 条目 TTL、`genRefresh` 版本快照刷新周期、`adminToken` 管理接口鉴权）。
+（`cacheTtl` 条目 TTL、`genRefresh` 版本快照刷新周期、`adminToken` 管理接口鉴权、
+`trustedProxies` 信任的反代 IP/CIDR 列表——默认空 = 只信 TCP 对端，防
+`X-Forwarded-For` 伪造；部署在反代/SLB 之后时必须配置，否则对端 IP 取到的是反代地址）。
+`adminToken` 可用环境变量 `LOGINSERVER_ACL_ADMIN_TOKEN` 覆盖（生产避免明文落盘，优先级高于 yaml）。
 
 ## 数据库
 
@@ -41,6 +44,7 @@ loginserver.exe -conf config\loginserver.yaml -logger config\tlog.yaml
 |------|------|
 | `sql/create_database.sql` | 创建 `loginserver` 库 |
 | `sql/create_tables.sql` | 建表：`whitelist_ip`（IP白名单）、`blacklist_ip`（IP黑名单）、`banned_role`（封禁角色）、`server_info`（服务器信息列表） |
+| `sql/update_operator.sql` | 已建表环境增量更新：白/黑名单增加 `operator` 审计字段（新环境无需执行） |
 
 ```bash
 mysql -h 127.0.0.1 -u root -proot < sql/create_database.sql
@@ -56,6 +60,10 @@ mysql -h 127.0.0.1 -u root -proot < sql/create_tables.sql
 2. **封禁角色**（绑定账号后，按 accountId）：命中返回 `code=1005`（role banned），
    不再发放 loginToken。
 
+token 校验（HTTP `/api/v1/validate/token` 与 sgate gRPC `ValidateLoginToken`）在 token
+匹配通过后同样检测封禁角色：封禁后已登录会话的重校验立即失效（不主动踢在线，重连即拦），
+token 不匹配直接返回 `valid=false`。
+
 检测结果读 Redis 缓存（负缓存同样命中，稳定态每次登录 2~3 次 GET），miss 经 singleflight
 合并回源 MySQL；缓存写入携带全局版本号（acl:gen，写库后 INCR），读侧本地版本快照每
 `acl.genRefresh` 刷新一次——新增/删除在本节点立即生效，其他节点脏数据窗口 ≈ genRefresh，
@@ -68,13 +76,13 @@ mysql -h 127.0.0.1 -u root -proot < sql/create_tables.sql
 
 | 方法 | 路径 | 请求体 | 说明 |
 |------|------|--------|------|
-| POST | `/api/v1/acl/whitelist` | `{"ip":"1.2.3.4","remark":"..."}` | 新增白名单 IP |
-| DELETE | `/api/v1/acl/whitelist` | `{"ip":"1.2.3.4"}` | 删除白名单 IP |
-| POST | `/api/v1/acl/blacklist` | `{"ip":"1.2.3.4","remark":"..."}` | 新增黑名单 IP |
-| DELETE | `/api/v1/acl/blacklist` | `{"ip":"1.2.3.4"}` | 删除黑名单 IP |
+| POST | `/api/v1/acl/whitelist` | `{"ip":"1.2.3.4","remark":"...","operator":"gm01"}` | 新增白名单 IP（operator 落库审计，可选） |
+| DELETE | `/api/v1/acl/whitelist` | `{"ip":"1.2.3.4","operator":"gm01"}` | 删除白名单 IP（operator 仅审计日志） |
+| POST | `/api/v1/acl/blacklist` | `{"ip":"1.2.3.4","remark":"...","operator":"gm01"}` | 新增黑名单 IP |
+| DELETE | `/api/v1/acl/blacklist` | `{"ip":"1.2.3.4","operator":"gm01"}` | 删除黑名单 IP |
 | GET | `/api/v1/servers` | - | 服务器列表（读缓存，无需 token） |
 
-业务错误码：`1004` IP 命中黑名单、`1005` 角色被封禁、`1006` token 校验失败、`1007` 检测/增删失败。
+业务错误码：`1004` IP 命中黑名单、`1005` 角色被封禁、`1006` 管理接口鉴权失败、`1007` 检测/增删失败。
 
 ### gRPC 接口（供 sgate 调用）
 
@@ -83,13 +91,17 @@ mysql -h 127.0.0.1 -u root -proot < sql/create_tables.sql
 | RPC | 请求 | 说明 |
 |-----|------|------|
 | `AddBlacklistIP` | `ip` / `remark` / `operator` | 增加黑名单 IP |
-| `AddBannedRole` | `roleId` / `reason` / `operator` | 封禁角色（accountId），登录时拦截 |
+| `AddBannedRole` | `roleId` / `reason` / `operator` | 封禁角色（accountId），登录与 token 校验时拦截 |
+| `RemoveBlacklistIP` | `ip` / `operator` | 移除黑名单 IP |
+| `RemoveBannedRole` | `roleId` / `operator` | 解除角色封禁 |
 
 `tools/grpc_admin` 模拟 sgate 调用：
 
 ```bash
 go run ./tools/grpc_admin -mode blacklist -ip 1.2.3.4 -remark drill
+go run ./tools/grpc_admin -mode remove-blacklist -ip 1.2.3.4
 go run ./tools/grpc_admin -mode banrole -role <accountId> -reason drill
+go run ./tools/grpc_admin -mode remove-banrole -role <accountId>
 ```
 
 ## 压测

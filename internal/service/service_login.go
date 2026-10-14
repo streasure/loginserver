@@ -42,6 +42,25 @@ func (s *LoginService) GenerateLoginToken(ctx context.Context, accountId string)
 }
 
 func (s *LoginService) ValidateLoginToken(ctx context.Context, accountId, loginToken string) (bool, error) {
+	valid, err := s.tokenValid(ctx, accountId, loginToken)
+	if err != nil || !valid {
+		return false, err
+	}
+	// token 有效仍检测封禁：封禁后已登录会话重校验即失效（不踢在线，重连即拦）；
+	// 检测故障 fail-closed，与登录路径一致
+	banned, err := GetAclService().IsRoleBanned(ctx, accountId)
+	if err != nil {
+		return false, err
+	}
+	if banned {
+		tlog.Warn(ctx, "validate blocked, account:%s banned", accountId)
+		return false, nil
+	}
+	return true, nil
+}
+
+// tokenValid 校验 loginToken 是否与存储值一致（进程内缓存优先，miss 回源 redis）
+func (s *LoginService) tokenValid(ctx context.Context, accountId, loginToken string) (bool, error) {
 	if stored, ok := GetTokenManager().Get(accountId); ok {
 		return stored == loginToken, nil
 	}

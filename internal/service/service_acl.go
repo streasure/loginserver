@@ -144,37 +144,41 @@ func (s *AclService) IsRoleBanned(ctx context.Context, roleID string) (bool, err
 }
 
 // AddWhiteIP 写入白名单：落库后 bump 版本并写缓存
-func (s *AclService) AddWhiteIP(ctx context.Context, ip, remark string) error {
-	if err := dmodel.AddWhitelistIP(ctx, ip, remark); err != nil {
+func (s *AclService) AddWhiteIP(ctx context.Context, ip, remark, operator string) error {
+	if err := dmodel.AddWhitelistIP(ctx, ip, remark, operator); err != nil {
 		return err
 	}
+	tlog.Info(ctx, "acl add whitelist ip:%s operator:%s", ip, operator)
 	s.publish(ctx, rmodel.AclKindWhiteIP, ip, true)
 	return nil
 }
 
 // RemoveWhiteIP 删除白名单：落库后 bump 版本并写负缓存条目（其他节点立即可见删除结果）
-func (s *AclService) RemoveWhiteIP(ctx context.Context, ip string) error {
+func (s *AclService) RemoveWhiteIP(ctx context.Context, ip, operator string) error {
 	if _, err := dmodel.DelWhitelistIP(ctx, ip); err != nil {
 		return err
 	}
+	tlog.Info(ctx, "acl remove whitelist ip:%s operator:%s", ip, operator)
 	s.publish(ctx, rmodel.AclKindWhiteIP, ip, false)
 	return nil
 }
 
 // AddBlackIP 写入黑名单
-func (s *AclService) AddBlackIP(ctx context.Context, ip, remark string) error {
-	if err := dmodel.AddBlacklistIP(ctx, ip, remark); err != nil {
+func (s *AclService) AddBlackIP(ctx context.Context, ip, remark, operator string) error {
+	if err := dmodel.AddBlacklistIP(ctx, ip, remark, operator); err != nil {
 		return err
 	}
+	tlog.Info(ctx, "acl add blacklist ip:%s operator:%s", ip, operator)
 	s.publish(ctx, rmodel.AclKindBlackIP, ip, true)
 	return nil
 }
 
 // RemoveBlackIP 删除黑名单
-func (s *AclService) RemoveBlackIP(ctx context.Context, ip string) error {
+func (s *AclService) RemoveBlackIP(ctx context.Context, ip, operator string) error {
 	if _, err := dmodel.DelBlacklistIP(ctx, ip); err != nil {
 		return err
 	}
+	tlog.Info(ctx, "acl remove blacklist ip:%s operator:%s", ip, operator)
 	s.publish(ctx, rmodel.AclKindBlackIP, ip, false)
 	return nil
 }
@@ -184,7 +188,18 @@ func (s *AclService) AddBannedRole(ctx context.Context, roleID, reason, operator
 	if err := dmodel.AddBannedRole(ctx, roleID, reason, operator); err != nil {
 		return err
 	}
+	tlog.Info(ctx, "acl add banned role:%s operator:%s", roleID, operator)
 	s.publish(ctx, rmodel.AclKindRole, roleID, true)
+	return nil
+}
+
+// RemoveBannedRole 解除角色封禁（sgate 经 gRPC 调用）
+func (s *AclService) RemoveBannedRole(ctx context.Context, roleID, operator string) error {
+	if _, err := dmodel.DelBannedRole(ctx, roleID); err != nil {
+		return err
+	}
+	tlog.Info(ctx, "acl remove banned role:%s operator:%s", roleID, operator)
+	s.publish(ctx, rmodel.AclKindRole, roleID, false)
 	return nil
 }
 
@@ -194,14 +209,16 @@ func (s *AclService) ServerList(ctx context.Context) ([]dmodel.ServerInfo, error
 		return list, nil
 	}
 	v, err, _ := s.sf.Do(rmodel.AclKindServers, func() (any, error) {
-		if list, ok := s.lookupServers(ctx); ok {
+		// 回源不绑定单个请求的生命周期：首个调用方 ctx 取消不应连带失败其他等待方
+		loaderCtx := context.WithoutCancel(ctx)
+		if list, ok := s.lookupServers(loaderCtx); ok {
 			return list, nil
 		}
-		list, err := dmodel.ListServers(ctx)
+		list, err := dmodel.ListServers(loaderCtx)
 		if err != nil {
 			return nil, err
 		}
-		s.storeServers(ctx, list)
+		s.storeServers(loaderCtx, list)
 		return list, nil
 	})
 	if err != nil {
@@ -218,17 +235,21 @@ func (s *AclService) checkCached(ctx context.Context, kind, id string, load func
 		return hit, nil
 	}
 	v, err, _ := s.sf.Do(kind+":"+id, func() (any, error) {
-		if hit, ok := s.lookup(ctx, kind, id); ok {
+		// 回源不绑定单个请求的生命周期：首个调用方 ctx 取消不应连带失败其他等待方，
+		// MySQL 回源由连接/语句超时兜底
+		loaderCtx := context.WithoutCancel(ctx)
+		if hit, ok := s.lookup(loaderCtx, kind, id); ok {
 			return hit, nil
 		}
-		hit, err := load(ctx)
+		hit, err := load(loaderCtx)
 		if err != nil {
 			return nil, err
 		}
-		s.store(ctx, kind, id, hit)
+		s.store(loaderCtx, kind, id, hit)
 		return hit, nil
 	})
 	if err != nil {
+		tlog.Error(ctx, "acl load failed kind:%s id:%s err:%v", kind, id, err)
 		return false, err
 	}
 	hit, _ := v.(bool)
@@ -261,13 +282,17 @@ func (s *AclService) store(ctx context.Context, kind, id string, hit bool) {
 }
 
 // publish 写路径：INCR 全局版本并写入新条目（删除操作写负缓存条目），
-// 其他节点因条目版本更新立即生效；redis 不可用时仅告警（MySQL 为事实源，TTL 兜底收敛）
+// 其他节点因条目版本更新立即生效；redis 不可用时仅告警（MySQL 为事实源，TTL 兜底收敛）。
+// 写后同步本地版本快照（读己之写），消除写入方等 genRefresh 才认新条目的窗口。
+// ensureGen 直接采用 redis 值（清库/恢复场景需回退能力），版本倒退上界由条目 TTL 兜底
 func (s *AclService) publish(ctx context.Context, kind, id string, hit bool) {
 	gen, err := s.cache.IncrGen(ctx)
 	if err != nil {
 		tlog.Warn(ctx, "acl: incr gen failed kind:%s id:%s err:%v（缓存待 TTL 收敛）", kind, id, err)
 		return
 	}
+	s.gen.Store(gen)
+	s.genAt.Store(time.Now().UnixNano())
 	if err := s.cache.SetEntry(ctx, kind, id, &rmodel.AclEntry{Ver: gen, Hit: hit}, s.ttl); err != nil {
 		tlog.Warn(ctx, "acl: publish entry failed kind:%s id:%s err:%v", kind, id, err)
 	}

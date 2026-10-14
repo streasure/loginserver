@@ -3,6 +3,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/streasure/protocol/enums"
@@ -53,6 +56,9 @@ type AclConfig struct {
 	CacheTtl   time.Duration `yaml:"cacheTtl" default:"5m"`
 	GenRefresh time.Duration `yaml:"genRefresh" default:"2s"`
 	AdminToken string        `yaml:"adminToken"` // HTTP 管理接口鉴权头 X-Admin-Token 的期望值
+	// TrustedProxies 信任的反代 IP/CIDR（经 ugin.WithTrustedProxies 接入 gin）：
+	// 空 = 只信 TCP 对端，防 X-Forwarded-For 伪造；部署在反代/SLB 之后时必须配置
+	TrustedProxies []string `yaml:"trustedProxies"`
 }
 
 var _defaultConfig = &Config{}
@@ -65,6 +71,10 @@ func LoadConfig(configFile ...string) error {
 	cfg, err := uconfig.Load[Config](configFile...)
 	if err != nil {
 		return err
+	}
+	// 环境变量覆盖管理 token（生产避免明文落盘），在校验前应用
+	if v := os.Getenv("LOGINSERVER_ACL_ADMIN_TOKEN"); v != "" {
+		cfg.Acl.AdminToken = v
 	}
 	if err := validate(cfg); err != nil {
 		return fmt.Errorf("config validation: %w", err)
@@ -122,6 +132,15 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Acl.AdminToken == "" {
 		return errors.New("acl.adminToken is required")
+	}
+	for _, proxy := range cfg.Acl.TrustedProxies {
+		if strings.Contains(proxy, "/") {
+			if _, _, err := net.ParseCIDR(proxy); err != nil {
+				return fmt.Errorf("acl.trustedProxies %q is not a valid IP/CIDR", proxy)
+			}
+		} else if net.ParseIP(proxy) == nil {
+			return fmt.Errorf("acl.trustedProxies %q is not a valid IP/CIDR", proxy)
+		}
 	}
 	return nil
 }

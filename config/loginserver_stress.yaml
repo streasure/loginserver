@@ -66,3 +66,4 @@ acl:
   cacheTtl: 5m
   genRefresh: 2s
   adminToken: "loginserver-admin"
+  trustedProxies: []

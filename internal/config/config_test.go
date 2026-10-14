@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,5 +235,40 @@ redis:
 				t.Error("LoadConfig should fail, got nil")
 			}
 		})
+	}
+}
+
+// trustedProxies 合法 IP/CIDR 原样解析（经 ugin.WithTrustedProxies 供 gin 信任反代）
+func TestLoadAclTrustedProxies(t *testing.T) {
+	yaml := strings.Replace(baseYaml, `  adminToken: "test-admin-token"`, `  adminToken: "test-admin-token"
+  trustedProxies: ["10.0.0.0/8", "192.168.1.1"]`, 1)
+	if err := LoadConfig(writeTempConfig(t, yaml)); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	got := GetConfig().Acl.TrustedProxies
+	if len(got) != 2 || got[0] != "10.0.0.0/8" || got[1] != "192.168.1.1" {
+		t.Errorf("Acl.TrustedProxies = %v, want [10.0.0.0/8 192.168.1.1]", got)
+	}
+}
+
+// trustedProxies 非法串在配置加载阶段早失败
+func TestLoadAclTrustedProxiesInvalid(t *testing.T) {
+	for _, bad := range []string{"not-an-ip", "10.0.0.0/8/8"} {
+		yaml := strings.Replace(baseYaml, `  adminToken: "test-admin-token"`, fmt.Sprintf(`  adminToken: "test-admin-token"
+  trustedProxies: [%q]`, bad), 1)
+		if err := LoadConfig(writeTempConfig(t, yaml)); err == nil {
+			t.Errorf("LoadConfig with trustedProxies %q should fail", bad)
+		}
+	}
+}
+
+// 环境变量 LOGINSERVER_ACL_ADMIN_TOKEN 覆盖 yaml 中的 adminToken（生产避免明文落盘）
+func TestLoadAdminTokenEnvOverride(t *testing.T) {
+	t.Setenv("LOGINSERVER_ACL_ADMIN_TOKEN", "env-secret-token")
+	if err := LoadConfig(writeTempConfig(t, baseYaml)); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := GetConfig().Acl.AdminToken; got != "env-secret-token" {
+		t.Errorf("Acl.AdminToken = %q, want env override %q", got, "env-secret-token")
 	}
 }

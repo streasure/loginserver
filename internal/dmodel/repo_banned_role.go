@@ -49,3 +49,16 @@ func HasBannedRole(ctx context.Context, roleID string) (bool, error) {
 	}
 	return n > 0, nil
 }
+
+// DelBannedRole 解除角色封禁，返回影响行数
+func DelBannedRole(ctx context.Context, roleID string) (int64, error) {
+	if roleID == "" {
+		return 0, ErrInvalidRoleID
+	}
+	db, err := getDB(ctx)
+	if err != nil {
+		return 0, err
+	}
+	res := db.WithContext(ctx).Where("role_id = ?", roleID).Delete(&BannedRole{})
+	return res.RowsAffected, res.Error
+}

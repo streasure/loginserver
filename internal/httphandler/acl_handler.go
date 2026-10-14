@@ -59,7 +59,7 @@ func AddWhitelistIP(c *gin.Context) {
 		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeParamError, "invalid ip"))
 		return
 	}
-	if err := service.GetAclService().AddWhiteIP(c.Request.Context(), req.IP, req.Remark); err != nil {
+	if err := service.GetAclService().AddWhiteIP(c.Request.Context(), req.IP, req.Remark, req.Operator); err != nil {
 		aclOpFailed(c, "add whitelist ip", err)
 		return
 	}
@@ -75,7 +75,7 @@ func DelWhitelistIP(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	if err := service.GetAclService().RemoveWhiteIP(c.Request.Context(), req.IP); err != nil {
+	if err := service.GetAclService().RemoveWhiteIP(c.Request.Context(), req.IP, req.Operator); err != nil {
 		aclOpFailed(c, "delete whitelist ip", err)
 		return
 	}
@@ -95,7 +95,7 @@ func AddBlacklistIP(c *gin.Context) {
 		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeParamError, "invalid ip"))
 		return
 	}
-	if err := service.GetAclService().AddBlackIP(c.Request.Context(), req.IP, req.Remark); err != nil {
+	if err := service.GetAclService().AddBlackIP(c.Request.Context(), req.IP, req.Remark, req.Operator); err != nil {
 		aclOpFailed(c, "add blacklist ip", err)
 		return
 	}
@@ -111,7 +111,7 @@ func DelBlacklistIP(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	if err := service.GetAclService().RemoveBlackIP(c.Request.Context(), req.IP); err != nil {
+	if err := service.GetAclService().RemoveBlackIP(c.Request.Context(), req.IP, req.Operator); err != nil {
 		aclOpFailed(c, "delete blacklist ip", err)
 		return
 	}

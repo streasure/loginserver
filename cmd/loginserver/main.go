@@ -90,10 +90,12 @@ func main() {
 	container.Add(etcdComp)
 
 	// HTTP 业务组件；uload 自适应准入随组件接入（边界全为 0 时惰性不生效），
-	// gin 中间件与 gRPC 拦截器共享同一状态机
+	// gin 中间件与 gRPC 拦截器共享同一状态机；
+	// TrustedProxies 防 X-Forwarded-For 伪造（默认只信 TCP 对端，反代后需配置）
 	container.Add(ugin.NewComponent(conf.ServiceKey, netutil.PortAddr(conf.Ports.HttpAddr),
 		ugin.WithAPM(false),
 		ugin.WithLoad(conf.Load),
+		ugin.WithTrustedProxies(conf.Acl.TrustedProxies),
 	))
 
 	// pprof

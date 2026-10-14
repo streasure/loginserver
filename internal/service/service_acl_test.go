@@ -153,6 +153,21 @@ func TestAclPublishNewerEntryVisibleWithoutGenRefresh(t *testing.T) {
 	}
 }
 
+// publish 后写入方本地版本快照立即同步（读己之写，无需等 genRefresh）
+func TestAclPublishSyncsLocalGen(t *testing.T) {
+	cache := newFakeAclCache()
+	svc := newTestAclService(cache)
+
+	svc.publish(context.Background(), rmodel.AclKindBlackIP, "1.1.1.1", true)
+	if got := svc.gen.Load(); got != 1 {
+		t.Errorf("local gen after publish = %d, want 1 (synced)", got)
+	}
+	svc.publish(context.Background(), rmodel.AclKindRole, "acc-1", true)
+	if got := svc.gen.Load(); got != 2 {
+		t.Errorf("local gen after second publish = %d, want 2 (synced)", got)
+	}
+}
+
 // 本地版本快照刷新后，版本旧于全局版本的条目被判过期回源（跨节点删除的收敛路径）
 func TestAclStaleEntryRejectedAfterGenRefresh(t *testing.T) {
 	cache := newFakeAclCache()
