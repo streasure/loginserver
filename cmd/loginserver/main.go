@@ -16,6 +16,7 @@ import (
 	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/ugin"
+	"github.com/streasure/util/ugorm"
 	"github.com/streasure/util/uperf"
 	"github.com/streasure/util/upprof"
 	"github.com/streasure/util/uredis"
@@ -68,6 +69,10 @@ func main() {
 	// redis：配置解析/校验在 uredis.Config，此处一行创建并注册全局实例
 	// （rmodel 经 uredis.GetClient("rdb") 取用）
 	container.Add(uredis.Init(conf.Redis))
+
+	// gorm：业务库（白/黑名单、封禁角色、服务器列表），配置形态对齐 ugorm.Config，
+	// 须在业务组件（rpc/ugin）之前 Init，dmodel 经 ugorm.GetDbContext 取用
+	container.Add(ugorm.NewComponent(&conf.Db))
 
 	// token manager（loginToken 校验的进程内缓存，须在 rpc 之前 Init）
 	container.Add(service.GetTokenManager())

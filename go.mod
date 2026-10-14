@@ -9,9 +9,11 @@ require (
 	github.com/streasure/util v1.0.11
 	golang.org/x/sync v0.24.0
 	google.golang.org/grpc v1.67.0
+	gorm.io/gorm v1.25.5
 )
 
 require (
+	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/BurntSushi/toml v1.4.0 // indirect
 	github.com/armon/go-radix v1.0.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
@@ -29,10 +31,13 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.14.1 // indirect
+	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/joeshaw/multierror v0.0.0-20140124173710-69b34d4ec901 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
@@ -49,8 +54,10 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	go.elastic.co/apm/module/apmgin/v2 v2.4.3 // indirect
+	go.elastic.co/apm/module/apmgormv2/v2 v2.4.7 // indirect
 	go.elastic.co/apm/module/apmgrpc/v2 v2.6.2 // indirect
 	go.elastic.co/apm/module/apmhttp/v2 v2.6.2 // indirect
+	go.elastic.co/apm/module/apmsql/v2 v2.4.7 // indirect
 	go.elastic.co/apm/v2 v2.6.2 // indirect
 	go.elastic.co/fastjson v1.2.0 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.18 // indirect
@@ -69,10 +76,12 @@ require (
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	gorm.io/driver/mysql v1.0.2 // indirect
 	howett.net/plist v0.0.0-20181124034731-591f970eefbb // indirect
 )
 
 replace (
+	github.com/streasure/protocol => ../protocol
 	github.com/streasure/treasure-slog => ../treasure-slog
 	github.com/streasure/util => ../util
 )

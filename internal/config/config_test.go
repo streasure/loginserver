@@ -27,6 +27,22 @@ etcd:
 limits:
   loginTokenExpireSeconds: 86400
   validateTokenCacheTtl: "1s"
+
+db:
+  configs:
+    logindb:
+      dbname: "loginserver"
+      host: "127.0.0.1"
+      port: 3306
+      uid: "root"
+      pwd: "root"
+  maxIdleConns: 10
+  maxOpenConns: 50
+
+acl:
+  cacheTtl: 5m
+  genRefresh: 2s
+  adminToken: "test-admin-token"
 `
 
 // 默认 redis 段：实例 + 读写超时（连接池参数未配置 → 0/空 = uredis 默认值）

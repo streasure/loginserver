@@ -3,10 +3,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/streasure/protocol/enums"
 	"github.com/streasure/util/uconfig"
 	"github.com/streasure/util/uetcd"
+	"github.com/streasure/util/ugorm"
 	"github.com/streasure/util/uload"
 	"github.com/streasure/util/uperf"
 	"github.com/streasure/util/uredis"
@@ -25,6 +27,8 @@ type Config struct {
 	Limits LimitInfo      `validate:"required"`
 	Perf   uperf.Config   `validate:"required"`
 	Load   uload.Config   `yaml:"load"` // 自适应准入控制（整机 CPU/内存边界），随 ugin.WithLoad 接入，全 0 边界时惰性不生效
+	Db     ugorm.Config   `yaml:"db"`   // 业务库（白/黑名单、封禁角色、服务器列表），yaml 形态对齐 ugorm.Config
+	Acl    AclConfig      `yaml:"acl"`  // 黑白名单/封禁检测的缓存与管理接口配置
 
 	ServiceKey     string
 	LoginServerKey string
@@ -39,6 +43,16 @@ type Ports struct {
 type LimitInfo struct {
 	LoginTokenExpireSeconds int64  `default:"86400"`
 	ValidateTokenCacheTtl   string `default:"1s"`
+}
+
+// AclConfig ACL（黑白名单/封禁角色）缓存与管理接口配置。
+// 缓存采用版本号（gen）token：每次写库 INCR 全局版本，条目携带写入时版本，
+// 读侧本地版本快照过期（genRefresh）后强制回源，跨节点脏数据窗口 ≈ genRefresh，
+// 条目 TTL（cacheTtl）为 redis 数据丢失/写失败时的兜底上界。
+type AclConfig struct {
+	CacheTtl   time.Duration `yaml:"cacheTtl" default:"5m"`
+	GenRefresh time.Duration `yaml:"genRefresh" default:"2s"`
+	AdminToken string        `yaml:"adminToken"` // HTTP 管理接口鉴权头 X-Admin-Token 的期望值
 }
 
 var _defaultConfig = &Config{}
@@ -96,6 +110,18 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Limits.LoginTokenExpireSeconds <= 0 {
 		return errors.New("limits.loginTokenExpireSeconds must be positive")
+	}
+	if err := cfg.Db.Validate(); err != nil {
+		return err
+	}
+	if cfg.Acl.CacheTtl <= 0 {
+		return errors.New("acl.cacheTtl must be positive")
+	}
+	if cfg.Acl.GenRefresh <= 0 {
+		return errors.New("acl.genRefresh must be positive")
+	}
+	if cfg.Acl.AdminToken == "" {
+		return errors.New("acl.adminToken is required")
 	}
 	return nil
 }

@@ -55,3 +55,24 @@ load:
   # release: 5        # 恢复回差(%)：低于边界-release 才恢复（默认 5，防抖）
   # apiAddr: ":10004" # 负载状态查询接口监听地址（可选），GET /internal/load 返回状态 JSON
   # apiPath: "/internal/load"
+
+# 业务数据库（白/黑名单、封禁角色、服务器列表）：形态对齐 ugorm.Config，
+# 建库建表脚本见 sql/，组件由 ugorm.NewComponent(&conf.Db) 接入
+db:
+  configs:
+    logindb:
+      dbname: "loginserver"
+      host: "127.0.0.1"
+      port: 3306
+      uid: "root"
+      pwd: "root"
+  maxIdleConns: 10
+  maxOpenConns: 50
+  maxIdleSeconds: 3600
+  maxLifeSeconds: 28800
+
+# ACL 黑白名单/封禁角色：缓存版本号（gen）token 与管理接口配置
+acl:
+  cacheTtl: 5m          # 缓存条目 TTL（redis 数据丢失/写失败时脏数据兜底上界）
+  genRefresh: 2s        # 本地版本快照刷新周期（跨节点缓存脏数据窗口上界）
+  adminToken: "loginserver-admin"   # 管理接口鉴权：请求头 X-Admin-Token 期望值

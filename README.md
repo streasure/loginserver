@@ -28,6 +28,70 @@ loginserver.exe -conf config\loginserver.yaml -logger config\tlog.yaml
 配置中的 `redis` 段由 `uredis.Config` 解析（`instances` 组织实例，池/时长参数未配置即用默认值），
 详见 util 文档 uredis 章节。
 
+`db` 段由 `ugorm.Config` 解析（`configs` 组织实例，`maxIdleConns`/`maxOpenConns`/
+`maxIdleSeconds`/`maxLifeSeconds` 为全局池参数），形态与业务参考配置一致，
+详见 util 文档 ugorm 章节。`acl` 段为黑白名单/封禁角色的缓存与管理接口配置
+（`cacheTtl` 条目 TTL、`genRefresh` 版本快照刷新周期、`adminToken` 管理接口鉴权）。
+
+## 数据库
+
+建库建表脚本（MySQL 8，utf8mb4）：
+
+| 文件 | 用途 |
+|------|------|
+| `sql/create_database.sql` | 创建 `loginserver` 库 |
+| `sql/create_tables.sql` | 建表：`whitelist_ip`（IP白名单）、`blacklist_ip`（IP黑名单）、`banned_role`（封禁角色）、`server_info`（服务器信息列表） |
+
+```bash
+mysql -h 127.0.0.1 -u root -proot < sql/create_database.sql
+mysql -h 127.0.0.1 -u root -proot < sql/create_tables.sql
+```
+
+## 黑白名单 / 封禁角色（ACL）
+
+登录 `/api/v1/login` 每次执行两段检测：
+
+1. **IP 黑白名单**（绑定账号前，按对端 IP）：白名单放行并跳过黑名单检查，命中黑名单返回
+   `code=1004`（ip blocked）；
+2. **封禁角色**（绑定账号后，按 accountId）：命中返回 `code=1005`（role banned），
+   不再发放 loginToken。
+
+检测结果读 Redis 缓存（负缓存同样命中，稳定态每次登录 2~3 次 GET），miss 经 singleflight
+合并回源 MySQL；缓存写入携带全局版本号（acl:gen，写库后 INCR），读侧本地版本快照每
+`acl.genRefresh` 刷新一次——新增/删除在本节点立即生效，其他节点脏数据窗口 ≈ genRefresh，
+`acl.cacheTtl` 兜底 redis 数据丢失/写失败场景；redis 整体不可用时绕过缓存直查 MySQL。
+
+### 管理接口（HTTP）
+
+请求头 `X-Admin-Token` 必须等于配置 `acl.adminToken`（服务器列表除外），失败返回 401 + `code=1006`。
+增删直接写 MySQL 并同步刷新 Redis 缓存。
+
+| 方法 | 路径 | 请求体 | 说明 |
+|------|------|--------|------|
+| POST | `/api/v1/acl/whitelist` | `{"ip":"1.2.3.4","remark":"..."}` | 新增白名单 IP |
+| DELETE | `/api/v1/acl/whitelist` | `{"ip":"1.2.3.4"}` | 删除白名单 IP |
+| POST | `/api/v1/acl/blacklist` | `{"ip":"1.2.3.4","remark":"..."}` | 新增黑名单 IP |
+| DELETE | `/api/v1/acl/blacklist` | `{"ip":"1.2.3.4"}` | 删除黑名单 IP |
+| GET | `/api/v1/servers` | - | 服务器列表（读缓存，无需 token） |
+
+业务错误码：`1004` IP 命中黑名单、`1005` 角色被封禁、`1006` token 校验失败、`1007` 检测/增删失败。
+
+### gRPC 接口（供 sgate 调用）
+
+协议见 `protocol/loginserver/loginserver.proto`，同样落库并同步缓存：
+
+| RPC | 请求 | 说明 |
+|-----|------|------|
+| `AddBlacklistIP` | `ip` / `remark` / `operator` | 增加黑名单 IP |
+| `AddBannedRole` | `roleId` / `reason` / `operator` | 封禁角色（accountId），登录时拦截 |
+
+`tools/grpc_admin` 模拟 sgate 调用：
+
+```bash
+go run ./tools/grpc_admin -mode blacklist -ip 1.2.3.4 -remark drill
+go run ./tools/grpc_admin -mode banrole -role <accountId> -reason drill
+```
+
 ## 压测
 
 `tools/httpstress` —— HTTP 压测客户端，按轮询分发覆盖全部接口并输出分接口统计：

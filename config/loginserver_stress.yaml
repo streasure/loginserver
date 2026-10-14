@@ -48,3 +48,21 @@ load:
   memLimit: 0
   cpuReject: 0
   memReject: 0
+
+db:
+  configs:
+    logindb:
+      dbname: "loginserver"
+      host: "127.0.0.1"
+      port: 3306
+      uid: "root"
+      pwd: "root"
+  maxIdleConns: 10
+  maxOpenConns: 50
+  maxIdleSeconds: 3600
+  maxLifeSeconds: 28800
+
+acl:
+  cacheTtl: 5m
+  genRefresh: 2s
+  adminToken: "loginserver-admin"
