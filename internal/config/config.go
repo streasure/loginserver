@@ -32,9 +32,16 @@ type Config struct {
 	Load   uload.Config   `yaml:"load"` // 自适应准入控制（整机 CPU/内存边界），经 LoadComponent 接入 + WithPreMiddleware 注入，全 0 边界时惰性不生效
 	Db     ugorm.Config   `yaml:"db"`   // 业务库（白/黑名单、封禁角色、服务器列表），yaml 形态对齐 ugorm.Config
 	Acl    AclConfig      `yaml:"acl"`  // 黑白名单/封禁检测的缓存与管理接口配置
+	Sgate  SgateConfig    `yaml:"sgate"`
 
 	ServiceKey     string
 	LoginServerKey string
+}
+
+// SgateConfig loginserver → sgate 的 Kick 联动配置（单向 Kick 模型）
+type SgateConfig struct {
+	// InternalToken Kick RPC 客户端携带的 token（sgate 侧 kickInternalToken 校验同值）
+	InternalToken string `yaml:"internalToken"`
 }
 
 type Ports struct {

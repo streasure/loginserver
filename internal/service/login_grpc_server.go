@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/streasure/loginserver/internal/dmodel"
+	"github.com/streasure/loginserver/internal/rmodel"
 	"github.com/streasure/util/tlog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -29,6 +30,15 @@ func (h *LoginServer) ValidateLoginToken(
 	if err != nil {
 		tlog.Error(ctx, "grpc ValidateLoginToken failed accountId:%s err:%v", req.GetAccountId(), err)
 		return nil, status.Error(codes.Internal, "validate login token failed")
+	}
+
+	// 会话索引（单向 Kick 模型）：sgate 过门校验携带会话上下文时写三键缓存；
+	// best-effort，写失败不影响校验结果。BatchValidate 复用本消息但不带上下文，天然跳过
+	if valid && req.GetSgateId() != "" && req.GetConnId() != "" {
+		if err := rmodel.WriteSession(ctx, req.GetSgateId(), req.GetConnId(), req.GetAccountId(), req.GetClientIp()); err != nil {
+			tlog.Warn(ctx, "write session cache failed accountId:%s sgate:%s conn:%s err:%v",
+				req.GetAccountId(), req.GetSgateId(), req.GetConnId(), err)
+		}
 	}
 
 	return &loginproto.ValidateLoginTokenAck{Valid: valid}, nil

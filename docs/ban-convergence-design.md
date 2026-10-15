@@ -7,24 +7,28 @@
 ## 1. 架构原则
 
 1. 封禁**只在 loginserver 写**（HTTP API → MySQL + Redis），sgate 无任何封禁存储与判定
-2. sgate 不主动上报会话；session 缓存由 **loginserver 在 Login HTTP 成功时同步写入**
+2. sgate 不主动上报会话；session 缓存由 **loginserver 在 ValidateLoginToken gRPC 校验
+   通过时写入**（sgate 过门校验携带 `sgate_id/conn_id/client_ip`；HTTP /api/v1/login
+   是预铸 loginToken 的工具接口，不写会话缓存）
 3. 踢人是**单向 RPC**：loginserver → sgate（Kick），sgate 本地查表执行，不落任何数据
 4. 踢人失败**不回滚封禁**：权威库先写、踢 best-effort，失败仅告警+计数
 5. sgate 删除全部 admin 封禁端点，运维入口唯一
 
 ## 2. 会话缓存（Redis，仅 loginserver 读写）
 
-Login HTTP 控制器在校验通过、签发 JWT 后**同步写**（成功响应前；sgate 是否最终收到
-LoginOK 不影响本缓存——它只是踢人路由索引，不是在线凭证）：
+**写入点**：sgate LoginGate 过门校验调用 gRPC `ValidateLoginToken` 时在请求中携带
+`sgate_id/conn_id/client_ip`；loginserver 校验通过后同步写三键（best-effort，写失败
+仅告警不阻断校验；BatchValidate 复用同消息但不带上下文，天然跳过）。
+sgate 是否最终收到 LoginOK 不影响本缓存——它只是踢人路由索引，不是在线凭证：
 
 | 键 | 类型 | 值/成员 | TTL |
 |---|---|---|---|
-| `sess:conn:{sgateId}:{connId}` | hash | `{account_id, user_id, role_id, ip, login_at}` | 24h |
+| `sess:conn:{sgateId}:{connId}` | hash | `{account_id, ip, login_at}` | 24h |
 | `sess:acct:{accountId}` | set | 成员 `{sgateId}:{connId}` | 24h |
 | `sess:ip:{ip}` | set | 成员 `{sgateId}:{connId}` | 24h |
 
-- `sgateId`/`connId` 来自 sgate 签发的 JWT claims（Login HTTP 请求头 `X-Sgate-Conn`）；
-  claims 缺失则跳过写缓存（不阻断登录）
+- `sgateId`/`connId`/`clientIp` 由 sgate 在 ValidateLoginTokenReq 中携带；
+  `sgate_id/conn_id` 任一为空则跳过写缓存（不阻断校验）
 - **无 Unbind**：正常下线不清键，靠 TTL 收敛；死条目踢人时由 sgate 本地 no-op
 - 无 TTL 刷新：>24h 在线会话踢不中（登录校验兜底），见决议 11
 
@@ -127,15 +131,16 @@ uetcd 移除：sgate 适配（ServiceEvent→SourceEvent 转换）由 loginserve
 SgateClientPool 接线时以本地小适配器实现（~10 行，见
 `E:\util\docs\package-decoupling-design.md` §4 V5）。
 
-## 7. 实施步骤（P1）
+## 7. 实施步骤（P1，已完成 2026-10-15）
 
-1. protocol：KickService + regen + 门禁
-2. loginserver：repo_session 三键写入 + LoginController 挂点 + 单测
-3. loginserver：SgateClientPool + SGATE Discovery + 单测
-4. loginserver：kickAfterBan（先库后踢、超时、计数）挂入 ACL 写路径
-5. sgate：kickConn 抽取 + KickService（含 token 拦截器）+ 自注册 etcd
-6. sgate：删除封禁存储/判定/端点 + 清理测试
-7. 三仓门禁（gofmt/build/vet/staticcheck/test/go fix）
+1. protocol：KickService + ValidateLoginTokenReq 三字段 + regen + 门禁 ✅
+2. loginserver：repo_session 三键写入 + ValidateLoginToken 挂点 ✅（HTTP 控制器不写）
+3. loginserver：SgateClientPool（ugrpc.Pool + JSON 地址本地适配器）+ SGATE Discovery ✅
+4. loginserver：kickAfterBan（先库后踢、超时、计数）挂 AddBlackIP ✅
+5. sgate：kickConn 抽取 + KickService（token 校验）+ accountID 索引 + Validate 携带会话上下文 ✅
+   （sgate etcd 自注册原本已开启，无需新增）
+6. sgate：删除封禁存储/判定/端点 + 清理测试 ✅（BanStore/banRedis/rejectIfBanned/admin 端点全删）
+7. 三仓门禁（gofmt/build/vet/staticcheck/test/go fix）✅
 8. drill：批量封禁在线账号→秒踢（响应带计数）；封 IP→该 IP 全踢；
    封禁→立即重登被拦截；解封→恢复；sgate 不可达→封禁仍落库、计数告警；
    Login 后立即封禁（mid-login）→记录竞态行为符合 §3.4 预期
@@ -151,7 +156,7 @@ P2（后续）：`BatchValidateLoginTokens` 周期安全网（收口 §3.4 竞�
 | 2 | sgate admin 端点 | 直接删除，文档写迁移指引 |
 | 3 | 离线 JWT 撤销 | 登录校验兜底；§3.4 mid-login 竞态接受、P2 BatchValidate 收口 |
 | 4 | sgate etcd 注册 | 开启自注册（Kick 路由需要 live 地址） |
-| 5 | 会话缓存写入方 | **loginserver Login HTTP 同步写**（v1 的 sgate Bind 上报废弃） |
+| 5 | 会话缓存写入方 | **ValidateLoginToken gRPC 校验通过时写**（sgate 携带 sgate_id/conn_id/client_ip；与原设想的 Login HTTP 写入点不同——HTTP /api/v1/login 只是预铸 token 工具接口，真实过门走 gRPC） |
 | 6 | Kick RPC 鉴权 | `x-internal-token`，sgate 配置校验 |
 | 7 | bind token | **不存在**（无 Bind RPC，v1 决议 7 废弃） |
 | 8 | 踢人时序 | **先落权威库、再 best-effort 踢**（2s 超时，失败不回滚），响应附计数 |

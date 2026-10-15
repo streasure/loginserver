@@ -94,6 +94,15 @@ func main() {
 	}
 	container.Add(etcdComp)
 
+	// SGATE 发现 + Kick 客户端池（单向 Kick 模型：封禁落库后经池内连接下发 KickIP/KickAccounts）
+	sgateDisc, err := internalcomponent.NewSgateDiscoveryComponent()
+	if err != nil {
+		tlog.Error(context.TODO(), "create sgate discovery failed:%v", err)
+		return
+	}
+	container.Add(sgateDisc)
+	container.Add(service.NewSgateClientPool(sgateDisc, conf.Sgate.InternalToken))
+
 	// HTTP 业务组件；uload 自适应准入由 LoadComponent 随容器接入（边界全为 0 时惰性
 	// 不生效），gin 中间件经 WithPreMiddleware 显式挂载（util 解耦后不再隐式接线），
 	// 与 gRPC 拦截器共享同一状态机；

@@ -370,6 +370,8 @@ func (s *AclService) AddBlackIP(ctx context.Context, ip, remark, operator string
 	}
 	tlog.Info(ctx, "acl add blacklist ip:%s operator:%s", ip, operator)
 	s.applyLocal(ctx, rmodel.AclKindBlackIP, norm, true)
+	// 先落权威库、再 best-effort 踢在线连接（2s 超时/台，失败不回滚）
+	kickIPAfterBan(ctx, norm)
 	return nil
 }
 
