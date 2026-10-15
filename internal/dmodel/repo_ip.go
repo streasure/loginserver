@@ -133,3 +133,37 @@ func HasBlacklistIP(ctx context.Context, ip string) (bool, error) {
 	}
 	return n > 0, nil
 }
+
+// ListWhitelistIP 白名单列表（按 id 升序；limit<=0 不限制；管理列表接口与 ACL 快照全量加载共用）
+func ListWhitelistIP(ctx context.Context, limit int) ([]WhitelistIP, error) {
+	db, err := getDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	q := db.WithContext(ctx).Order("id ASC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	var rows []WhitelistIP
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// ListBlacklistIP 黑名单列表（按 id 升序；limit<=0 不限制）
+func ListBlacklistIP(ctx context.Context, limit int) ([]BlacklistIP, error) {
+	db, err := getDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	q := db.WithContext(ctx).Order("id ASC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	var rows []BlacklistIP
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}

@@ -34,6 +34,31 @@ func (h *LoginServer) ValidateLoginToken(
 	return &loginproto.ValidateLoginTokenAck{Valid: valid}, nil
 }
 
+// maxBatchValidateItems 单次批量校验上限（sgate 周期重校验分片建议远小于此值）
+const maxBatchValidateItems = 500
+
+// BatchValidateLoginTokens sgate 调用：批量校验在线会话 token（封禁/失效会话周期回收）。
+// 结果与 items 顺序一一对应；单条失败按 invalid 处理（不因个别失败中断整批）
+func (h *LoginServer) BatchValidateLoginTokens(
+	ctx context.Context,
+	req *loginproto.BatchValidateLoginTokensReq,
+) (*loginproto.BatchValidateLoginTokensAck, error) {
+	items := req.GetItems()
+	if len(items) > maxBatchValidateItems {
+		return nil, status.Errorf(codes.InvalidArgument, "batch size %d exceeds limit %d", len(items), maxBatchValidateItems)
+	}
+	valid := make([]bool, len(items))
+	for i, item := range items {
+		v, err := GetLoginService().ValidateLoginToken(ctx, item.GetAccountId(), item.GetLoginToken())
+		if err != nil {
+			tlog.Error(ctx, "grpc BatchValidateLoginTokens item failed accountId:%s err:%v", item.GetAccountId(), err)
+			v = false
+		}
+		valid[i] = v
+	}
+	return &loginproto.BatchValidateLoginTokensAck{Valid: valid}, nil
+}
+
 // AddBlacklistIP sgate 调用：写入黑名单（落库 + 同步 Redis 缓存）
 func (h *LoginServer) AddBlacklistIP(
 	ctx context.Context,

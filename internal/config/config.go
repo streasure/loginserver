@@ -29,7 +29,7 @@ type Config struct {
 	Etcd   uetcd.EtcdInfo `validate:"required"`
 	Limits LimitInfo      `validate:"required"`
 	Perf   uperf.Config   `validate:"required"`
-	Load   uload.Config   `yaml:"load"` // 自适应准入控制（整机 CPU/内存边界），随 ugin.WithLoad 接入，全 0 边界时惰性不生效
+	Load   uload.Config   `yaml:"load"` // 自适应准入控制（整机 CPU/内存边界），经 LoadComponent 接入 + WithPreMiddleware 注入，全 0 边界时惰性不生效
 	Db     ugorm.Config   `yaml:"db"`   // 业务库（白/黑名单、封禁角色、服务器列表），yaml 形态对齐 ugorm.Config
 	Acl    AclConfig      `yaml:"acl"`  // 黑白名单/封禁检测的缓存与管理接口配置
 

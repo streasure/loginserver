@@ -62,3 +62,20 @@ func DelBannedRole(ctx context.Context, roleID string) (int64, error) {
 	res := db.WithContext(ctx).Where("role_id = ?", roleID).Delete(&BannedRole{})
 	return res.RowsAffected, res.Error
 }
+
+// ListBannedRoles 封禁角色列表（按 id 升序；limit<=0 不限制；管理列表接口与 ACL 快照全量加载共用）
+func ListBannedRoles(ctx context.Context, limit int) ([]BannedRole, error) {
+	db, err := getDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	q := db.WithContext(ctx).Order("id ASC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	var rows []BannedRole
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
