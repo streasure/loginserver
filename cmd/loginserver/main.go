@@ -17,6 +17,7 @@ import (
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/ugin"
 	"github.com/streasure/util/ugorm"
+	"github.com/streasure/util/uload"
 	"github.com/streasure/util/uperf"
 	"github.com/streasure/util/upprof"
 	"github.com/streasure/util/uredis"
@@ -74,6 +75,10 @@ func main() {
 	// 须在业务组件（rpc/ugin）之前 Init，dmodel 经 ugorm.GetDbContext 取用
 	container.Add(ugorm.NewComponent(&conf.Db))
 
+	// ACL 服务：启动全量加载黑白名单/封禁角色快照（失败即失败启动），后台 gen 轮询同步其他节点写入；
+	// 须在 gorm 之后 Init（快照加载依赖 MySQL）
+	container.Add(service.GetAclService())
+
 	// token manager（loginToken 校验的进程内缓存，须在 rpc 之前 Init）
 	container.Add(service.GetTokenManager())
 
@@ -89,12 +94,14 @@ func main() {
 	}
 	container.Add(etcdComp)
 
-	// HTTP 业务组件；uload 自适应准入随组件接入（边界全为 0 时惰性不生效），
-	// gin 中间件与 gRPC 拦截器共享同一状态机；
+	// HTTP 业务组件；uload 自适应准入由 LoadComponent 随容器接入（边界全为 0 时惰性
+	// 不生效），gin 中间件经 WithPreMiddleware 显式挂载（util 解耦后不再隐式接线），
+	// 与 gRPC 拦截器共享同一状态机；
 	// TrustedProxies 防 X-Forwarded-For 伪造（默认只信 TCP 对端，反代后需配置）
+	container.Add(internalcomponent.NewLoadComponent(conf.Load))
 	container.Add(ugin.NewComponent(conf.ServiceKey, netutil.PortAddr(conf.Ports.HttpAddr),
 		ugin.WithAPM(false),
-		ugin.WithLoad(conf.Load),
+		ugin.WithPreMiddleware(uload.Middleware()),
 		ugin.WithTrustedProxies(conf.Acl.TrustedProxies),
 	))
 
