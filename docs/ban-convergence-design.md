@@ -65,11 +65,12 @@ AddBan 时 sgate rejectIfBanned 槽位已删；sgate 不再存封禁。校验发
 - **gRPC ValidateLoginToken**（每角色上线前，sgate 调）——读 MySQL ACL 内存快照，
   ban 表纳入快照（gen 轮询）
 
-### 3.4 已知竞态（接受，P2 收口）
+### 3.4 已知竞态（P2 已收口 2026-10-16）
 
 Login HTTP 成功 → 玩家过 sgate 登录门之间，若发生封禁：踢人 no-op（尚未连接），
-且玩家持有 ban 前 JWT 可过门上线。窗口极小；P2 用 `BatchValidateLoginTokens`
-周期回刷 sgate 本地校验缓存彻底收口（sgate 届时存 loginKey，仅用于该校验）。
+且玩家持有 ban 前 JWT 可过门上线。窗口极小；P2 已用 `BatchValidateLoginTokens`
+周期安全网收口（sgate 登录后留存 loginKey，每 batchInterval 批量重校验全部在线会话，
+失效/被封禁的本地踢下线；同时兜底会话缓存 TTL=24h 过期踢不中）。
 
 ## 4. 协议变更（protocol）
 
@@ -155,8 +156,10 @@ SgateClientPool 接线时以本地小适配器实现（~10 行，见
      AddBannedRole 补挂 kickAccountAfterBan；sgateDiscoveryWrapper 防 etcd 组件名撞名；
      sgateSource.ServiceSet 截取 etcd key 末段为 instanceID（与 Pool.Get 对齐）
 
-P2（后续）：`BatchValidateLoginTokens` 周期安全网（收口 §3.4 竞态 + TTL 刷新）；
-反代场景 sgate trustedProxies；util 解耦 P0–P4 并行推进。
+P2 已完成（2026-10-16）：`BatchValidateLoginTokens` 周期安全网（收口 §3.4 竞态 +
+会话缓存 TTL 过期兜底）——sgate 侧 `loginValidation.batchInterval`（默认 60s）/
+`batchSize`（默认 200），登录留存 loginKey，周期批量校验踢失效会话。
+反代场景 sgate trustedProxies 仍待做；util 解耦 P0–P5 已完成。
 
 ## 8. 决议记录（2026-10 定稿）
 
@@ -164,7 +167,7 @@ P2（后续）：`BatchValidateLoginTokens` 周期安全网（收口 §3.4 竞�
 |---|---|---|
 | 1 | TTL 临时封禁 | 砍掉，仅永久封禁入权威库 |
 | 2 | sgate admin 端点 | 直接删除，文档写迁移指引 |
-| 3 | 离线 JWT 撤销 | 登录校验兜底；§3.4 mid-login 竞态接受、P2 BatchValidate 收口 |
+| 3 | 离线 JWT 撤销 | 登录校验兜底；§3.4 mid-login 竞态 + TTL 过期已由 P2 BatchValidate 安全网收口 |
 | 4 | sgate etcd 注册 | 开启自注册（Kick 路由需要 live 地址） |
 | 5 | 会话缓存写入方 | **ValidateLoginToken gRPC 校验通过时写**（sgate 携带 sgate_id/conn_id/client_ip；与原设想的 Login HTTP 写入点不同——HTTP /api/v1/login 只是预铸 token 工具接口，真实过门走 gRPC） |
 | 6 | Kick RPC 鉴权 | `x-internal-token`，sgate 配置校验 |
@@ -172,5 +175,5 @@ P2（后续）：`BatchValidateLoginTokens` 周期安全网（收口 §3.4 竞�
 | 8 | 踢人时序 | **先落权威库、再 best-effort 踢**（2s 超时，失败不回滚），响应附计数 |
 | 9 | IP 踢人口径 | sgate 本地 RemoteHost 全扫；反代 XFF→trustedProxies 记 P2 |
 | 10 | 存量 banRedis | 默认无迁移；有在封数据再单独确认 |
-| 11 | 注册表 TTL=24h | 接受超长在线踢不中；P2 回刷 |
+| 11 | 注册表 TTL=24h | 超长在线踢不中由 P2 BatchValidate 安全网兜底（周期重校验踢失效会话） |
 | 12 | 总体模型 | **单向 Kick 模型**（本 v2）：session 登录时写、sgate 纯执行器、无反向 RPC |
