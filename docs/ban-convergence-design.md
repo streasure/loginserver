@@ -144,6 +144,16 @@ SgateClientPool 接线时以本地小适配器实现（~10 行，见
 8. drill：批量封禁在线账号→秒踢（响应带计数）；封 IP→该 IP 全踢；
    封禁→立即重登被拦截；解封→恢复；sgate 不可达→封禁仍落库、计数告警；
    Login 后立即封禁（mid-login）→记录竞态行为符合 §3.4 预期
+   ✅ drill 完成（2026-10-16，S1–S6 全 PASS）：
+   - S1 账号封禁踢在线（reason=ban code=403）
+   - S2 封禁后重登拦截（validation 查权威库拒）
+   - S3 解封恢复（同 accountId 重登 LOGIN_OK）
+   - S4 封 IP 双连接踢（reason=blacklist code=403，两连接均收 KICK_NOTIFY）
+   - S5 sgate 停机封禁落库（ban 落库成功，best-effort 踢计数告警）
+   - S6 mid-login 竞态：LOGIN_OK 后即收 KICK（符合 §3.4 接受预期）
+   - drill 修正：KickAccounts.account_ids int64→string（accountId 为十六进制字符串）；
+     AddBannedRole 补挂 kickAccountAfterBan；sgateDiscoveryWrapper 防 etcd 组件名撞名；
+     sgateSource.ServiceSet 截取 etcd key 末段为 instanceID（与 Pool.Get 对齐）
 
 P2（后续）：`BatchValidateLoginTokens` 周期安全网（收口 §3.4 竞态 + TTL 刷新）；
 反代场景 sgate trustedProxies；util 解耦 P0–P4 并行推进。
