@@ -151,3 +151,14 @@ go run ./tools/grpcstress -target 127.0.0.1:10002 -c 100 -d 10s
 ```bash
 loginserver.exe -conf config\loginserver_stress.yaml -logger config\tlog_stress.yaml
 ```
+
+### ValidateLoginToken 基线（2026-10-16，封禁收敛 P1 后）
+
+| 并发 | 连接 | 时长 | RPS | avg | p50 | p95 | p99 | p99.9 | max | failed |
+|------|------|------|-----|-----|-----|-----|-----|-------|-----|--------|
+| 100 | 10 | 30s | 61,284 | 1.63ms | 1.20ms | 2.99ms | 5.30ms | 11.97ms | 178.04ms | 0 |
+| 200 | 20 | 30s | **67,612** | 2.96ms | 2.82ms | 5.65ms | 9.48ms | 17.58ms | 51.33ms | 0 |
+| 500 | 50 | 15s | 65,492 | 7.63ms | 6.53ms | 16.30ms | 30.02ms | 50.82ms | 98.37ms | 0 |
+
+峰值约 6.7 万 RPS（c=200）；压测请求不携带 sgate 上下文（无 sgate_id/conn_id/client_ip），
+不触发会话三键写入，路径为 ACL 快照检测 + token 校验缓存（ttl=1s）+ Redis 回源。
