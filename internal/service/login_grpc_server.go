@@ -132,3 +132,16 @@ func (h *LoginServer) RemoveBannedRole(
 
 	return &loginproto.RemoveBannedRoleAck{Removed: true}, nil
 }
+
+// RemoveSession sgate 调用：连接关闭时清理会话缓存（best-effort，减少踢人路由死连接）。
+// 失败仅记日志，不回滚不断连——sgate 侧 TTL 24h 兜底。
+func (h *LoginServer) RemoveSession(
+	ctx context.Context,
+	req *loginproto.RemoveSessionReq,
+) (*loginproto.RemoveSessionAck, error) {
+	if err := rmodel.RemoveSession(ctx, req.GetSgateId(), req.GetConnId()); err != nil {
+		tlog.Warn(ctx, "grpc RemoveSession failed sgate:%s conn:%s err:%v", req.GetSgateId(), req.GetConnId(), err)
+		return &loginproto.RemoveSessionAck{Removed: false}, nil
+	}
+	return &loginproto.RemoveSessionAck{Removed: true}, nil
+}

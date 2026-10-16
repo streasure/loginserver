@@ -160,7 +160,10 @@ func (p *SgateClientPool) KickAccounts(ctx context.Context, sgateID string, acco
 
 // kickIPAfterBan 封禁 IP 后 best-effort 踢人。
 // 纯 IP：用 sess:ip:{exact} 会话索引路由到持有该 IP 连接的 sgate。
-// CIDR：索引无法路由（键是精确 IP），改为向全部已知 sgate 下发（每台本地前缀匹配）。
+// CIDR：优先 sess:ip24 前缀索引精确路由（/24 及更小）；
+//
+//	/23 及更大网段或 IPv6 → 向全部已知 sgate 下发（每台本地前缀匹配）。
+//
 // 权威库已落库，失败仅告警计数、不回滚。
 func kickIPAfterBan(ctx context.Context, ip string) (kicked int) {
 	pool := GetSgateClientPool()
@@ -169,7 +172,15 @@ func kickIPAfterBan(ctx context.Context, ip string) (kicked int) {
 	}
 	var sgates []string
 	if isCIDR(ip) {
-		sgates = pool.AllIDs()
+		routed, needAll, err := rmodel.SessionSgatesByCIDR(ctx, ip)
+		if err != nil {
+			tlog.Warn(ctx, "kickAfterBan cidr route failed ip:%s err:%v", ip, err)
+		}
+		if needAll || len(routed) == 0 {
+			sgates = pool.AllIDs()
+		} else {
+			sgates = routed
+		}
 	} else {
 		var err error
 		sgates, err = rmodel.SessionSgatesByIP(ctx, ip)
