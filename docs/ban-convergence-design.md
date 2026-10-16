@@ -1,8 +1,14 @@
-# 封禁架构收敛设计 v2 —— 单向 Kick 模型
+# 封禁架构收敛设计 v2.1 —— 单向 Kick 模型
 
 > 决议定稿 2026-10。核心原则：**封禁操作与数据 100% 收敛 loginserver**（MySQL 权威 +
 > Redis 集合与会话缓存）；sgate 退化为纯执行器（暴露 Kick gRPC，本地查表踢连接）；
-> **全程单向**：sgate 不反向调用 loginserver，不存封禁，不存 loginKey。
+> **全程单向**：sgate 不反向调用 loginserver 业务 API，不存封禁，不存 loginKey。
+>
+> **v2.1 健壮性增强**（2026-10-16）：①Session Unbind（OnClose 清理会话缓存，删 TTL
+> 死条目）②CIDR 封禁精确路由（sess:ip24 前缀索引）③Kick notify 可靠投递
+> （SendThenClose 保证客户端收到 KickNotify 后再断连）④反代真实 IP
+> （WS trustedProxies + TCP PROXY protocol v1）⑤admin 会话查询 API。
+> 详见 §9。
 
 ## 1. 架构原则
 
@@ -26,27 +32,33 @@ sgate 是否最终收到 LoginOK 不影响本缓存——它只是踢人路由�
 | `sess:conn:{sgateId}:{connId}` | hash | `{account_id, ip, login_at}` | 24h |
 | `sess:acct:{accountId}` | set | 成员 `{sgateId}:{connId}` | 24h |
 | `sess:ip:{ip}` | set | 成员 `{sgateId}:{connId}` | 24h |
+| `sess:ip24:{a.b.c.0/24}` | set | 成员 `{sgateId}:{connId}` | 24h |
 
 - `sgateId`/`connId`/`clientIp` 由 sgate 在 ValidateLoginTokenReq 中携带；
   `sgate_id/conn_id` 任一为空则跳过写缓存（不阻断校验）
-- **无 Unbind**：正常下线不清键，靠 TTL 收敛；死条目踢人时由 sgate 本地 no-op
-- 无 TTL 刷新：>24h 在线会话踢不中（登录校验兜底），见决议 11
+- `sess:ip24` 仅 IPv4 写入（CIDR 踢人路由用，v2.1 §9.2）；IPv6 无该键
+- **Session Unbind（v2.1 §9.1）**：sgate OnClose 异步调 gRPC `RemoveSession`
+  （best-effort，2s 超时，失败仅告警）删 conn hash + SREM 三集合成员；
+  TTL 仍保留 24h 作为兜底（sgate 崩溃/网络分区时收敛死条目）
+- 无 TTL 刷新：>24h 在线会话踢不中（登录校验 + BatchValidate 兜底），见决议 11
 
 ## 3. 核心流程
 
 ### 3.1 封禁（HTTP，支持批量）
 
 ```
-POST /admin/bans (BannedRole) | /admin/blacklist-ip  ← 批量 payload
+POST /admin/bans (BannedRole) | /admin/blacklist-ip  ← 批量 payload（纯 IP 或 CIDR）
 1. 写 MySQL（权威，upsert）
 2. 写 Redis banned 集合（登录校验用）  ← 权威库先落，无条件成功
 3. best-effort 踢人（默认同步，2s 超时）：
-   a. 对每个 accountId：SMEMBERS sess:acct → 解析 sgateId 去重
-      对每个 ip：SMEMBERS sess:ip → 解析 sgateId 去重
+   a. 纯 IP：SMEMBERS sess:ip:{exact} → 解析 sgateId 去重
+      CIDR：SessionSgatesByCIDR（/24 及更小展开 sess:ip24 前缀键并集，
+            /23 及更大或 IPv6 → needAll=true fallback 全部已知 sgate）
+      accountId：SMEMBERS sess:acct → 解析 sgateId 去重
    b. 对涉及的每台 sgate（池内连接）：
-      KickAccounts([accountId...]) / KickIP(ip)
+      KickAccounts([accountId...]) / KickIP(ip)（ip 可为 CIDR，sgate 本地前缀匹配）
    c. sgate 本地：accountId → connIDToAccountID 反查逐个 kickConn；
-      ip → conn 表扫 RemoteHost 全踢
+      ip → conn 表前缀/精确匹配（KickByIP CIDR 用 netip.Contains）
    d. 失败仅计数告警；响应体带 kicked/missed 计数
 4. 返回（含踢中/未中统计）
 ```
@@ -89,7 +101,10 @@ service KickService {
 
 ### loginserver.proto
 
-**无变更**（不需要 Bind/Unbind，v1 方案中的两条 RPC 废弃）。
+- **v2.1 新增** `RemoveSession(RemoveSessionReq) returns (RemoveSessionAck)`：
+  sgate OnClose 异步调用，清理会话缓存三键 + ip24（best-effort，幂等）
+  `RemoveSessionReq{sgate_id, conn_id}`
+- Bind RPC 仍不存在（sgate 不反向绑定；session 由 ValidateLoginToken 写入）
 
 ## 5. 客户端与依赖
 
@@ -159,9 +174,90 @@ SgateClientPool 接线时以本地小适配器实现（~10 行，见
 P2 已完成（2026-10-16）：`BatchValidateLoginTokens` 周期安全网（收口 §3.4 竞态 +
 会话缓存 TTL 过期兜底）——sgate 侧 `loginValidation.batchInterval`（默认 60s）/
 `batchSize`（默认 200），登录留存 loginKey，周期批量校验踢失效会话。
-反代场景 sgate trustedProxies 仍待做；util 解耦 P0–P5 已完成。
 
-## 8. 决议记录（2026-10 定稿）
+v2.1 已完成（2026-10-16）：Session Unbind + CIDR 精确路由 + Kick notify 可靠投递 +
+反代真实 IP（trustedProxies/PROXY protocol）+ admin 会话查询 API + BroadcastAll 优化
+（§9.1–9.6）。util 解耦 P0–P5 已完成。
+
+## 8. 设计简化分析（2026-10-16 评估）
+
+**结论：现有"单向 Kick + ACL 快照 + 周期安全网"架构方向正确，无需大改。**
+所有改进均为增量补强，不动核心模型。已评估的替代方案均被否决：
+
+| 替代方案 | 否决理由 |
+|---|---|
+| sgate 反向拉取封禁（定期 pull） | 违背"封禁只在 loginserver 写"原则；引入 sgate 存储与一致性问题；现有 ACL 快照 gen 轮询已覆盖 |
+| Redis Pub/Sub 广播踢人 | 不可靠（无 ack，sgate 短暂断连丢消息）；现有单向 RPC 有响应计数 |
+| sgate 上报会话到 loginserver（push） | 信道复杂（心跳/TTL/重连），现有"loginserver 在校验时写"天然准确 |
+| Bind/Unbind 双向 RPC | v1 已废弃；session 写入点在 ValidateLoginToken，反向绑定冗余 |
+| 全局 Session 中心表（独立服务） | 现有 Redis 三键 + ip24 已满足路由需求；独立服务增加运维面，收益不成比例 |
+| 关键消息可靠投递层（ack/重传） | Kick 是最终一致场景（登录校验 + BatchValidate 兜底），引入可靠性层复杂度不成比例 |
+
+**增量改进优先级**（已全部落地或标注）：
+
+| 改进 | 状态 | 价值 |
+|---|---|---|
+| Kick notify 可靠投递（SendThenClose） | ✅ v2.1 §9.3 | 保证客户端收到 KickNotify 后再断连 |
+| Session Unbind（RemoveSession） | ✅ v2.1 §9.1 | 删 TTL 死条目，踢人路由更准 |
+| CIDR 精确路由（sess:ip24） | ✅ v2.1 §9.2 | /24 及更小 CIDR 不再全量广播 |
+| PROXY protocol（TCP 反代） | ✅ v2.1 §9.4 | TCP 场景取真实客户端 IP |
+| admin 会话查询 API | ✅ v2.1 §9.5 | 运维可视化 |
+| 关键消息可靠投递（通用层） | ❌ 推迟 | Kick 场景已被兜底覆盖，其他场景按需单独评估 |
+| 全局 Session 表（独立服务） | ❌ 否决 | Redis 三键已够，见上表 |
+
+## 9. v2.1 健壮性增强（2026-10-16 落地）
+
+### 9.1 Session Unbind（RemoveSession RPC）
+
+- **问题**：session 缓存无 Unbind，正常下线靠 TTL(24h) 收敛 → 踢人路由含死条目
+- **方案**：sgate `OnClose` 异步调 loginserver `RemoveSession(sgate_id, conn_id)`，
+  best-effort（2s 超时，失败仅告警，靠 TTL 兜底）
+- **实现**：
+  - protocol：`RemoveSessionReq/RemoveSessionAck` + rpc（loginserver.proto）
+  - loginserver：`rmodel.RemoveSession`（HMGet 拿 acct/ip → pipeline Del+SREM
+    acct/ip/ip24 成员）+ `LoginServer.RemoveSession` gRPC handler
+  - sgate：`removeSessionAsync`（loginValidation 启用且有 accountID 时触发）
+- **不变式**：sgate 仍不存封禁/loginKey；RemoveSession 仅是缓存维护，不是业务 RPC
+
+### 9.2 CIDR 封禁精确路由（sess:ip24 索引）
+
+- **问题**：CIDR 封禁无法用 `sess:ip:{exact}` 路由 → `kickIPAfterBan` 全量广播
+- **方案**：写 session 时增写 `sess:ip24:{a.b.c.0/24}` 前缀键（仅 IPv4）；
+  CIDR 踢人时 `SessionSgatesByCIDR` 展开覆盖的 /24 键并集去重路由
+- **边界**：/24 及更小精确路由；/23 及更大或 IPv6 → `needAll=true` fallback 全量
+- **sgate 侧**：`KickByIP` CIDR 用 `netip.Contains` 匹配（`parseKickPrefix`）
+
+### 9.3 Kick notify 可靠投递（SendThenClose）
+
+- **问题**：`kickConn` 先写 KickNotify 再 Close，异步写与 Close 竞态（Windows 无
+  outbound flush）→ 客户端可能没收到通知就断连
+- **方案**：`Connection.SendThenClose`（AsyncWritev 成功回调内 Close，保证数据
+  发出后再关）；WS 走 EncodeWSFrame 分支
+- **实现**：kickConn 优先 SendThenClose，失败回退同步 Close（不阻断踢人）
+
+### 9.4 反代真实客户端 IP
+
+- **WS（HTTP 握手）**：`SecurityConfig.TrustedProxies`（IP/CIDR 列表），
+  命中则从 `X-Real-IP`（优先）/`X-Forwarded-For`（最左项）解析真实 IP，
+  `UpdateConnectionIP` 重键 per-IP 计数 + 覆盖 RemoteHost 缓存
+- **TCP（无 HTTP 头）**：`SecurityConfig.ProxyProtocol` 开关，
+  首包 `PROXY ` 开头时解析 PROXY protocol v1（TCP4/TCP6/UNKNOWN，≤107 字节），
+  同 `UpdateConnectionIP` 重键
+- **注意**：trustedProxies/ProxyProtocol 均默认关闭；开启前需确认反代拓扑
+
+### 9.5 admin 会话查询 API
+
+- `GET /api/v1/sessions?limit=&sgateId=`：SCAN `sess:conn:*` 列表（默认 200，
+  上限 500，sgateId 可选过滤），返回 `{sgateId, connId, accountId, ip, loginAt}`
+- `GET /api/v1/sessions/account?accountId=`：账号 → 在线 sgate 反查
+- 鉴权：`X-Admin-Token`；仅读，不改任何键
+
+### 9.6 BroadcastAll 广播优化
+
+- `BroadcastAll` 改快照 + 32 分片并发 Send（复用 kickConnectionsAsync pattern），
+  仅 StateForward 入快照；`sync/atomic` import
+
+## 10. 决议记录（2026-10 定稿，v2.1 增补）
 
 | # | 问题 | 决议 |
 |---|---|---|
@@ -177,3 +273,9 @@ P2 已完成（2026-10-16）：`BatchValidateLoginTokens` 周期安全网（收�
 | 10 | 存量 banRedis | 默认无迁移；有在封数据再单独确认 |
 | 11 | 注册表 TTL=24h | 超长在线踢不中由 P2 BatchValidate 安全网兜底（周期重校验踢失效会话） |
 | 12 | 总体模型 | **单向 Kick 模型**（本 v2）：session 登录时写、sgate 纯执行器、无反向 RPC |
+| 13 | Session Unbind | **v2.1 落地**：sgate OnClose 异步 RemoveSession（best-effort），TTL 保留兜底 |
+| 14 | CIDR 路由 | **v2.1 落地**：sess:ip24 前缀索引精确路由；/23 及更大 fallback 全量 |
+| 15 | Kick notify 投递 | **v2.1 落地**：SendThenClose 回调式关闭，保证客户端收到后再断连 |
+| 16 | 反代真实 IP | **v2.1 落地**：WS trustedProxies + TCP PROXY protocol v1，默认关闭 |
+| 17 | 关键消息可靠投递 | **推迟**：Kick 场景已被登录校验+BatchValidate 兜底覆盖，不引入通用可靠性层 |
+| 18 | 全局 Session 表 | **否决**：Redis 三键+ip24 已满足路由，独立服务收益不成比例 |
