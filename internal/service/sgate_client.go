@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -59,12 +60,17 @@ type sgateSource struct {
 	c *uetcd.Component
 }
 
+// etcdKeyInstanceID 从 etcd 全量 key（prefix/belong/SGATE:zone/instanceID）取末段实例 ID
+func etcdKeyInstanceID(fullKey string) string {
+	return fullKey[strings.LastIndex(fullKey, "/")+1:]
+}
+
 func (s sgateSource) ServiceSet() map[string]string {
 	in := s.c.ServiceSet()
 	out := make(map[string]string, len(in))
-	for instanceID, addr := range in {
+	for fullKey, addr := range in {
 		if grpcAddr := parseSgateGRPCAddr(addr); grpcAddr != "" {
-			out[instanceID] = grpcAddr
+			out[etcdKeyInstanceID(fullKey)] = grpcAddr
 		}
 	}
 	return out
@@ -72,14 +78,11 @@ func (s sgateSource) ServiceSet() map[string]string {
 
 func (s sgateSource) OnServiceChange(cb func(event ugrpc.SourceEvent)) {
 	s.c.OnServiceChange(func(ev uetcd.ServiceEvent) {
-		addr := ev.Address
-		if ev.Type == uetcd.EventRegister {
-			addr = parseSgateGRPCAddr(addr)
-		}
+		// register/deregister 统一解析（deregister 地址守卫比较需与池内 addr 同口径）
 		cb(ugrpc.SourceEvent{
 			Register:   ev.Type == uetcd.EventRegister,
 			InstanceID: ev.InstanceID,
-			Address:    addr,
+			Address:    parseSgateGRPCAddr(ev.Address),
 		})
 	})
 }
@@ -127,7 +130,7 @@ func (p *SgateClientPool) KickIP(ctx context.Context, sgateID, ip, reason string
 }
 
 // KickAccounts 请求指定 sgate 踢掉账号列表对应的本地连接；返回踢中数
-func (p *SgateClientPool) KickAccounts(ctx context.Context, sgateID string, accountIDs []int64, reason string) (int32, error) {
+func (p *SgateClientPool) KickAccounts(ctx context.Context, sgateID string, accountIDs []string, reason string) (int32, error) {
 	client, ok := p.pool.Get(sgateID)
 	if !ok {
 		return 0, fmt.Errorf("sgate %s not in pool", sgateID)
@@ -162,6 +165,33 @@ func kickIPAfterBan(ctx context.Context, ip string) (kicked int) {
 	}
 	if len(sgates) > 0 {
 		tlog.Info(ctx, "kickAfterBan done ip:%s sgates:%d kicked:%d", ip, len(sgates), kicked)
+	}
+	return kicked
+}
+
+// kickAccountAfterBan 封禁账号后 best-effort 踢人：会话缓存解析涉及的 sgate，
+// 逐台 KickAccounts（每台 2s 超时）。权威库已落库，失败仅告警计数、不回滚
+func kickAccountAfterBan(ctx context.Context, accountID string) (kicked int) {
+	pool := GetSgateClientPool()
+	if pool == nil {
+		return 0
+	}
+	sgates, err := rmodel.SessionSgatesByAccount(ctx, accountID)
+	if err != nil {
+		tlog.Warn(ctx, "kickAccountAfterBan session lookup failed account:%s err:%v", accountID, err)
+	}
+	for _, sgateID := range sgates {
+		cctx, cancel := context.WithTimeout(ctx, kickTimeout)
+		n, err := pool.KickAccounts(cctx, sgateID, []string{accountID}, "ban")
+		cancel()
+		if err != nil {
+			tlog.Warn(ctx, "kickAccountAfterBan KickAccounts failed sgate:%s account:%s err:%v", sgateID, accountID, err)
+			continue
+		}
+		kicked += int(n)
+	}
+	if len(sgates) > 0 {
+		tlog.Info(ctx, "kickAccountAfterBan done account:%s sgates:%d kicked:%d", accountID, len(sgates), kicked)
 	}
 	return kicked
 }

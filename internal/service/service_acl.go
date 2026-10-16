@@ -399,6 +399,8 @@ func (s *AclService) AddBannedRole(ctx context.Context, roleID, reason, operator
 	}
 	tlog.Info(ctx, "acl add banned role:%s operator:%s", roleID, operator)
 	s.applyLocal(ctx, rmodel.AclKindRole, roleID, true)
+	// 先落权威库、再 best-effort 踢在线连接（2s 超时/台，失败不回滚）
+	kickAccountAfterBan(ctx, roleID)
 	return nil
 }
 

@@ -101,7 +101,7 @@ func main() {
 		return
 	}
 	container.Add(sgateDisc)
-	container.Add(service.NewSgateClientPool(sgateDisc, conf.Sgate.InternalToken))
+	container.Add(service.NewSgateClientPool(sgateDisc.Inner(), conf.Sgate.InternalToken))
 
 	// HTTP 业务组件；uload 自适应准入由 LoadComponent 随容器接入（边界全为 0 时惰性
 	// 不生效），gin 中间件经 WithPreMiddleware 显式挂载（util 解耦后不再隐式接线），
