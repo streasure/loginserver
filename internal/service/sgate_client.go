@@ -26,7 +26,8 @@ const kickTimeout = 2 * time.Second
 // 由 SGATE:{zone} 的 etcd Discovery 驱动（sgate 自注册 JSON 地址 → 解析出 gRPC 拨号地址）。
 type SgateClientPool struct {
 	component.BaseComponent
-	pool *ugrpc.Pool[protoGw.KickServiceClient]
+	pool   *ugrpc.Pool[protoGw.KickServiceClient]
+	source sgateSource
 }
 
 var (
@@ -103,9 +104,24 @@ func NewSgateClientPool(discovery *uetcd.Component, internalToken string) *Sgate
 		),
 	})
 	if discovery != nil {
-		p.pool.Attach(sgateSource{c: discovery})
+		p.source = sgateSource{c: discovery}
+		p.pool.Attach(p.source)
 	}
 	return p
+}
+
+// AllIDs 返回当前已发现的全部 sgate 实例 ID（CIDR 封禁无法用 sess:ip 索引路由，
+// 需向全部 sgate 下发，各台本地前缀匹配）。
+func (p *SgateClientPool) AllIDs() []string {
+	if p.source.c == nil {
+		return nil
+	}
+	set := p.source.ServiceSet()
+	out := make([]string, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	return out
 }
 
 func (p *SgateClientPool) Name() string { return "sgate-client-pool" }
@@ -142,16 +158,24 @@ func (p *SgateClientPool) KickAccounts(ctx context.Context, sgateID string, acco
 	return ack.GetKickedCount(), nil
 }
 
-// kickIPAfterBan 封禁 IP 后 best-effort 踢人：会话缓存解析涉及的 sgate，
-// 逐台 KickIP（每台 2s 超时）。权威库已落库，失败仅告警计数、不回滚
+// kickIPAfterBan 封禁 IP 后 best-effort 踢人。
+// 纯 IP：用 sess:ip:{exact} 会话索引路由到持有该 IP 连接的 sgate。
+// CIDR：索引无法路由（键是精确 IP），改为向全部已知 sgate 下发（每台本地前缀匹配）。
+// 权威库已落库，失败仅告警计数、不回滚。
 func kickIPAfterBan(ctx context.Context, ip string) (kicked int) {
 	pool := GetSgateClientPool()
 	if pool == nil {
 		return 0
 	}
-	sgates, err := rmodel.SessionSgatesByIP(ctx, ip)
-	if err != nil {
-		tlog.Warn(ctx, "kickAfterBan session lookup failed ip:%s err:%v", ip, err)
+	var sgates []string
+	if isCIDR(ip) {
+		sgates = pool.AllIDs()
+	} else {
+		var err error
+		sgates, err = rmodel.SessionSgatesByIP(ctx, ip)
+		if err != nil {
+			tlog.Warn(ctx, "kickAfterBan session lookup failed ip:%s err:%v", ip, err)
+		}
 	}
 	for _, sgateID := range sgates {
 		cctx, cancel := context.WithTimeout(ctx, kickTimeout)
@@ -164,9 +188,14 @@ func kickIPAfterBan(ctx context.Context, ip string) (kicked int) {
 		kicked += int(n)
 	}
 	if len(sgates) > 0 {
-		tlog.Info(ctx, "kickAfterBan done ip:%s sgates:%d kicked:%d", ip, len(sgates), kicked)
+		tlog.Info(ctx, "kickAfterBan done ip:%s sgates:%d kicked:%d cidr:%v", ip, len(sgates), kicked, isCIDR(ip))
 	}
 	return kicked
+}
+
+// isCIDR 判断字符串是否为 CIDR 形态（含 '/'）
+func isCIDR(s string) bool {
+	return strings.Contains(s, "/")
 }
 
 // kickAccountAfterBan 封禁账号后 best-effort 踢人：会话缓存解析涉及的 sgate，

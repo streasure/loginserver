@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
+	"net/netip"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,12 +53,16 @@ func (rmodelCache) SetEntry(ctx context.Context, kind, id string, entry *rmodel.
 	return rmodel.SetAclEntry(ctx, kind, id, entry, ttl)
 }
 
-// aclData 全量 ACL 内存快照（白名单/黑名单/封禁角色），copy-on-write 更新
+// aclData 全量 ACL 内存快照（白名单/黑名单/封禁角色），copy-on-write 更新。
+// IP 条目分两类：纯 IP 进 exact 集合（O(1) 查）；CIDR 进前缀切片（线性扫，
+// 条目量小——生产通常 <100——且前缀 Contains 为纯位运算，足够快）。
 type aclData struct {
-	white map[string]struct{}
-	black map[string]struct{}
-	roles map[string]struct{}
-	gen   int64
+	white       map[string]struct{}
+	black       map[string]struct{}
+	whitePrefix []netip.Prefix
+	blackPrefix []netip.Prefix
+	roles       map[string]struct{}
+	gen         int64
 }
 
 func newAclData(gen int64) *aclData {
@@ -77,6 +82,8 @@ func (d *aclData) clone() *aclData {
 	for k := range d.black {
 		n.black[k] = struct{}{}
 	}
+	n.whitePrefix = append(n.whitePrefix[:0], d.whitePrefix...)
+	n.blackPrefix = append(n.blackPrefix[:0], d.blackPrefix...)
 	for k := range d.roles {
 		n.roles[k] = struct{}{}
 	}
@@ -275,9 +282,9 @@ func (s *AclService) CheckRole(ctx context.Context, roleID string) error {
 	return nil
 }
 
-// IsWhitelistedIP 查询 IP 是否在白名单（快照读，零存储依赖）
+// IsWhitelistedIP 查询 IP 是否在白名单（快照读）。先精确查，再扫 CIDR 前缀。
 func (s *AclService) IsWhitelistedIP(ctx context.Context, ip string) (bool, error) {
-	norm, ok := normalizeAclIP(ip)
+	addr, ok := parseAclAddr(ip)
 	if !ok {
 		return false, nil
 	}
@@ -285,13 +292,20 @@ func (s *AclService) IsWhitelistedIP(ctx context.Context, ip string) (bool, erro
 	if err != nil {
 		return false, err
 	}
-	_, hit := d.white[norm]
-	return hit, nil
+	if _, hit := d.white[addr.String()]; hit {
+		return true, nil
+	}
+	for _, p := range d.whitePrefix {
+		if p.Contains(addr) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
-// IsBlacklistedIP 查询 IP 是否在黑名单（快照读，零存储依赖）
+// IsBlacklistedIP 查询 IP 是否在黑名单（快照读）。先精确查，再扫 CIDR 前缀。
 func (s *AclService) IsBlacklistedIP(ctx context.Context, ip string) (bool, error) {
-	norm, ok := normalizeAclIP(ip)
+	addr, ok := parseAclAddr(ip)
 	if !ok {
 		return false, nil
 	}
@@ -299,8 +313,15 @@ func (s *AclService) IsBlacklistedIP(ctx context.Context, ip string) (bool, erro
 	if err != nil {
 		return false, err
 	}
-	_, hit := d.black[norm]
-	return hit, nil
+	if _, hit := d.black[addr.String()]; hit {
+		return true, nil
+	}
+	for _, p := range d.blackPrefix {
+		if p.Contains(addr) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // IsRoleBanned 查询角色是否被封禁（快照读，零存储依赖）
@@ -331,60 +352,61 @@ func (s *AclService) ListBannedRoles(ctx context.Context, limit int) ([]dmodel.B
 	return dmodel.ListBannedRoles(ctx, limit)
 }
 
-// AddWhiteIP 写入白名单：落库后本地快照即时应用并广播版本
+// AddWhiteIP 写入白名单：落库后本地快照即时应用并广播版本（支持纯 IP 与 CIDR）
 func (s *AclService) AddWhiteIP(ctx context.Context, ip, remark, operator string) error {
 	norm, ok := normalizeAclIP(ip)
 	if !ok {
 		return dmodel.ErrInvalidIP
 	}
-	if err := s.doWriteIP(ctx, rmodel.AclKindWhiteIP, ip, remark, operator, true); err != nil {
+	if err := s.doWriteIP(ctx, rmodel.AclKindWhiteIP, norm, remark, operator, true); err != nil {
 		return err
 	}
-	tlog.Info(ctx, "acl add whitelist ip:%s operator:%s", ip, operator)
+	tlog.Info(ctx, "acl add whitelist ip:%s operator:%s", norm, operator)
 	s.applyLocal(ctx, rmodel.AclKindWhiteIP, norm, true)
 	return nil
 }
 
-// RemoveWhiteIP 删除白名单：落库后本地快照即时应用并广播版本
+// RemoveWhiteIP 删除白名单：落库后本地快照即时应用并广播版本（支持纯 IP 与 CIDR）
 func (s *AclService) RemoveWhiteIP(ctx context.Context, ip, operator string) error {
 	norm, ok := normalizeAclIP(ip)
 	if !ok {
 		return dmodel.ErrInvalidIP
 	}
-	if err := s.doWriteIP(ctx, rmodel.AclKindWhiteIP, ip, "", operator, false); err != nil {
+	if err := s.doWriteIP(ctx, rmodel.AclKindWhiteIP, norm, "", operator, false); err != nil {
 		return err
 	}
-	tlog.Info(ctx, "acl remove whitelist ip:%s operator:%s", ip, operator)
+	tlog.Info(ctx, "acl remove whitelist ip:%s operator:%s", norm, operator)
 	s.applyLocal(ctx, rmodel.AclKindWhiteIP, norm, false)
 	return nil
 }
 
-// AddBlackIP 写入黑名单
+// AddBlackIP 写入黑名单（支持纯 IP 与 CIDR）
 func (s *AclService) AddBlackIP(ctx context.Context, ip, remark, operator string) error {
 	norm, ok := normalizeAclIP(ip)
 	if !ok {
 		return dmodel.ErrInvalidIP
 	}
-	if err := s.doWriteIP(ctx, rmodel.AclKindBlackIP, ip, remark, operator, true); err != nil {
+	if err := s.doWriteIP(ctx, rmodel.AclKindBlackIP, norm, remark, operator, true); err != nil {
 		return err
 	}
-	tlog.Info(ctx, "acl add blacklist ip:%s operator:%s", ip, operator)
+	tlog.Info(ctx, "acl add blacklist ip:%s operator:%s", norm, operator)
 	s.applyLocal(ctx, rmodel.AclKindBlackIP, norm, true)
-	// 先落权威库、再 best-effort 踢在线连接（2s 超时/台，失败不回滚）
+	// 先落权威库、再 best-effort 踢在线连接（2s 超时/台，失败不回滚）。
+	// CIDR 无法用 sess:ip:{exact} 索引路由，改为向全部已知 sgate 下发（每台本地前缀匹配）。
 	kickIPAfterBan(ctx, norm)
 	return nil
 }
 
-// RemoveBlackIP 删除黑名单
+// RemoveBlackIP 删除黑名单（支持纯 IP 与 CIDR）
 func (s *AclService) RemoveBlackIP(ctx context.Context, ip, operator string) error {
 	norm, ok := normalizeAclIP(ip)
 	if !ok {
 		return dmodel.ErrInvalidIP
 	}
-	if err := s.doWriteIP(ctx, rmodel.AclKindBlackIP, ip, "", operator, false); err != nil {
+	if err := s.doWriteIP(ctx, rmodel.AclKindBlackIP, norm, "", operator, false); err != nil {
 		return err
 	}
-	tlog.Info(ctx, "acl remove blacklist ip:%s operator:%s", ip, operator)
+	tlog.Info(ctx, "acl remove blacklist ip:%s operator:%s", norm, operator)
 	s.applyLocal(ctx, rmodel.AclKindBlackIP, norm, false)
 	return nil
 }
@@ -474,6 +496,7 @@ func (s *AclService) snapshot(ctx context.Context) (*aclData, error) {
 
 // applyLocal 写路径落地：广播版本（INCR）后在本地快照上即时应用增量（读己之写）。
 // redis INCR 失败时本地 gen 仍自增先行（其他节点待 cacheTtl 兜底重载收敛）。
+// id 已是 normalizeAclIP 规范化后的字符串（纯 IP 或 CIDR）。
 func (s *AclService) applyLocal(ctx context.Context, kind, id string, add bool) {
 	gen := s.publishGen(ctx)
 	old := s.snap.Load()
@@ -482,21 +505,31 @@ func (s *AclService) applyLocal(ctx context.Context, kind, id string, add bool) 
 		next = old.clone()
 		next.gen = gen
 	}
-	var m map[string]struct{}
 	switch kind {
 	case rmodel.AclKindWhiteIP:
-		m = next.white
+		if strings.Contains(id, "/") {
+			next.applyPrefix(&next.whitePrefix, id, add)
+		} else if add {
+			next.white[id] = struct{}{}
+		} else {
+			delete(next.white, id)
+		}
 	case rmodel.AclKindBlackIP:
-		m = next.black
+		if strings.Contains(id, "/") {
+			next.applyPrefix(&next.blackPrefix, id, add)
+		} else if add {
+			next.black[id] = struct{}{}
+		} else {
+			delete(next.black, id)
+		}
 	case rmodel.AclKindRole:
-		m = next.roles
+		if add {
+			next.roles[id] = struct{}{}
+		} else {
+			delete(next.roles, id)
+		}
 	default:
 		return
-	}
-	if add {
-		m[id] = struct{}{}
-	} else {
-		delete(m, id)
 	}
 	s.snap.Store(next)
 	updateAclSnapshotGauges(next)
@@ -539,10 +572,10 @@ func (s *AclService) reload(ctx context.Context) error {
 		}
 		d := newAclData(gen)
 		for _, ip := range white {
-			d.white[ip] = struct{}{}
+			d.addIPEdge(d.white, &d.whitePrefix, ip)
 		}
 		for _, ip := range black {
-			d.black[ip] = struct{}{}
+			d.addIPEdge(d.black, &d.blackPrefix, ip)
 		}
 		for _, r := range roles {
 			d.roles[r] = struct{}{}
@@ -648,11 +681,63 @@ func (s *AclService) storeServers(ctx context.Context, list []dmodel.ServerInfo)
 	}
 }
 
-// normalizeAclIP 规范化 IP（与 dmodel 同口径：net.ParseIP → String）；非法返回 ok=false
+// normalizeAclIP 规范化 IP 或 CIDR：纯 IP 转 netip 规范字符串；CIDR 转
+// netip.Prefix 规范字符串。非法返回 ok=false。
 func normalizeAclIP(ip string) (string, bool) {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
+	ip = strings.TrimSpace(ip)
+	if strings.Contains(ip, "/") {
+		p, err := netip.ParsePrefix(ip)
+		if err != nil {
+			return "", false
+		}
+		return p.String(), true
+	}
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
 		return "", false
 	}
-	return parsed.String(), true
+	return addr.String(), true
+}
+
+// parseAclAddr 解析查询参数为 netip.Addr（仅接受纯 IP，CIDR 作为查询参数无意义）
+func parseAclAddr(ip string) (netip.Addr, bool) {
+	addr, err := netip.ParseAddr(strings.TrimSpace(ip))
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return addr, true
+}
+
+// addIPEdge 按条目形态分流：纯 IP 进 exact 集合，CIDR 解析进前缀切片
+func (d *aclData) addIPEdge(exact map[string]struct{}, prefixes *[]netip.Prefix, entry string) {
+	if strings.Contains(entry, "/") {
+		if p, err := netip.ParsePrefix(entry); err == nil {
+			*prefixes = append(*prefixes, p)
+		}
+		return
+	}
+	exact[entry] = struct{}{}
+}
+
+// applyPrefix 前缀切片的增删（按 String() 精确匹配；生产条目量小，线性扫可接受）
+func (d *aclData) applyPrefix(prefixes *[]netip.Prefix, id string, add bool) {
+	p, err := netip.ParsePrefix(id)
+	if err != nil {
+		return
+	}
+	if !add {
+		for i, existing := range *prefixes {
+			if existing.String() == p.String() {
+				*prefixes = append((*prefixes)[:i], (*prefixes)[i+1:]...)
+				return
+			}
+		}
+		return
+	}
+	for _, existing := range *prefixes {
+		if existing.String() == p.String() {
+			return // 已存在，幂等
+		}
+	}
+	*prefixes = append(*prefixes, p)
 }

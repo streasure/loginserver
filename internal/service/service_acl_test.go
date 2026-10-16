@@ -352,3 +352,86 @@ func TestAclServerListCacheRoundtrip(t *testing.T) {
 		t.Error("stale server list should be rejected")
 	}
 }
+
+// CIDR 黑白名单：网段条目匹配段内所有 IP，不匹配段外
+func TestAclCIDRBlacklistMatch(t *testing.T) {
+	ctx := context.Background()
+	cache := newFakeAclCache()
+	store := newFakeAclStore()
+	store.black["10.0.0.0/8"] = struct{}{}
+	store.black["192.168.1.100"] = struct{}{} // 纯 IP 精确条目
+	store.white["10.1.2.3"] = struct{}{}      // 段内精确白名单应优先
+	svc := newTestAclService(cache, store)
+	loadTestSnapshot(t, svc)
+
+	// 段内 IP → 命中黑名单
+	if hit, err := svc.IsBlacklistedIP(ctx, "10.255.255.255"); err != nil || !hit {
+		t.Errorf("10.255.255.255 in 10.0.0.0/8: hit=%v err=%v", hit, err)
+	}
+	// 段外 IP → 不命中
+	if hit, err := svc.IsBlacklistedIP(ctx, "11.0.0.1"); err != nil || hit {
+		t.Errorf("11.0.0.1 not in 10.0.0.0/8: hit=%v err=%v", hit, err)
+	}
+	// 纯 IP 精确条目仍生效
+	if hit, err := svc.IsBlacklistedIP(ctx, "192.168.1.100"); err != nil || !hit {
+		t.Errorf("exact ip should hit: hit=%v err=%v", hit, err)
+	}
+	// 段内精确白名单优先（CheckLoginIP 白名单放行）
+	if err := svc.CheckLoginIP(ctx, "10.1.2.3"); err != nil {
+		t.Errorf("whitelist inside blacklisted cidr should pass, got %v", err)
+	}
+	// 段内非白名单 IP 被拦
+	if err := svc.CheckLoginIP(ctx, "10.9.9.9"); !errors.Is(err, ErrIPBlacklisted) {
+		t.Errorf("ip inside blacklisted cidr: got %v, want ErrIPBlacklisted", err)
+	}
+}
+
+// CIDR 白名单：网段放行
+func TestAclCIDRWhitelistMatch(t *testing.T) {
+	ctx := context.Background()
+	cache := newFakeAclCache()
+	store := newFakeAclStore()
+	store.white["172.16.0.0/12"] = struct{}{}
+	store.black["172.16.0.5"] = struct{}{} // 段内精确黑名单
+	svc := newTestAclService(cache, store)
+	loadTestSnapshot(t, svc)
+
+	// 段内 IP 白名单放行（即使同时命中段内黑名单——白名单优先）
+	if err := svc.CheckLoginIP(ctx, "172.31.255.254"); err != nil {
+		t.Errorf("ip in whitelisted cidr should pass, got %v", err)
+	}
+	// 白名单段外 + 命中黑名单精确条目 → 拦
+	if err := svc.CheckLoginIP(ctx, "172.16.0.5"); err != nil {
+		// 注意：172.16.0.5 同时在 white 段内和 black 精确 → 白名单优先，应放行
+		t.Errorf("ip in white cidr with exact black should pass (white wins), got %v", err)
+	}
+}
+
+// CIDR applyLocal 增删：add/remove 后快照即时生效（读己之写）
+func TestAclCIDRApplyLocal(t *testing.T) {
+	ctx := context.Background()
+	cache := newFakeAclCache()
+	store := newFakeAclStore()
+	svc := newTestAclService(cache, store)
+	svc.writeIP = func(context.Context, string, string, string, string, bool) error { return nil }
+	loadTestSnapshot(t, svc)
+
+	// add CIDR
+	if err := svc.AddBlackIP(ctx, "203.0.113.0/24", "test", "op"); err != nil {
+		t.Fatalf("AddBlackIP cidr: %v", err)
+	}
+	if hit, err := svc.IsBlacklistedIP(ctx, "203.0.113.50"); err != nil || !hit {
+		t.Errorf("after add cidr: hit=%v err=%v", hit, err)
+	}
+	// remove CIDR
+	if err := svc.RemoveBlackIP(ctx, "203.0.113.0/24", "op"); err != nil {
+		t.Fatalf("RemoveBlackIP cidr: %v", err)
+	}
+	if hit, err := svc.IsBlacklistedIP(ctx, "203.0.113.50"); err != nil || hit {
+		t.Errorf("after remove cidr: hit=%v err=%v, want false/nil", hit, err)
+	}
+	// 非法 CIDR
+	if err := svc.AddBlackIP(ctx, "10.0.0.0/33", "test", "op"); !errors.Is(err, dmodel.ErrInvalidIP) {
+		t.Errorf("invalid cidr: got %v, want ErrInvalidIP", err)
+	}
+}

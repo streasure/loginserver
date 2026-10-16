@@ -2,7 +2,6 @@ package httphandler
 
 import (
 	"errors"
-	"net"
 	"net/http"
 	"strconv"
 
@@ -58,17 +57,13 @@ func aclOpFailed(c *gin.Context, op string, err error) {
 	c.JSON(http.StatusOK, uhttp.Failure(dto.CodeAclFailed, op+" failed"))
 }
 
-// AddWhitelistIP 新增白名单 IP：写 MySQL 并同步 Redis 缓存
+// AddWhitelistIP 新增白名单 IP（支持纯 IP 与 CIDR）：写 MySQL 并同步 Redis 缓存
 func AddWhitelistIP(c *gin.Context) {
 	if !checkAdminToken(c) {
 		return
 	}
 	var req dto.AclIPReq
 	if !bindJSON(c, &req) {
-		return
-	}
-	if net.ParseIP(req.IP) == nil {
-		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeParamError, "invalid ip"))
 		return
 	}
 	if err := service.GetAclService().AddWhiteIP(c.Request.Context(), req.IP, req.Remark, req.Operator); err != nil {
@@ -94,17 +89,13 @@ func DelWhitelistIP(c *gin.Context) {
 	c.JSON(http.StatusOK, uhttp.Success(true))
 }
 
-// AddBlacklistIP 新增黑名单 IP：写 MySQL 并同步 Redis 缓存
+// AddBlacklistIP 新增黑名单 IP（支持纯 IP 与 CIDR）：写 MySQL 并同步 Redis 缓存
 func AddBlacklistIP(c *gin.Context) {
 	if !checkAdminToken(c) {
 		return
 	}
 	var req dto.AclIPReq
 	if !bindJSON(c, &req) {
-		return
-	}
-	if net.ParseIP(req.IP) == nil {
-		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeParamError, "invalid ip"))
 		return
 	}
 	if err := service.GetAclService().AddBlackIP(c.Request.Context(), req.IP, req.Remark, req.Operator); err != nil {

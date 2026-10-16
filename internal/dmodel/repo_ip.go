@@ -2,7 +2,8 @@ package dmodel
 
 import (
 	"context"
-	"net"
+	"net/netip"
+	"strings"
 	"time"
 
 	"gorm.io/gorm/clause"
@@ -32,12 +33,22 @@ type BlacklistIP struct {
 
 func (BlacklistIP) TableName() string { return "blacklist_ip" }
 
+// normalizeIP 规范化 IP 或 CIDR：普通 IP 转 netip 规范字符串；CIDR 转
+// netip.Prefix 规范字符串（保留掩码位数）。非法返回 ErrInvalidIP。
 func normalizeIP(ip string) (string, error) {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
+	ip = strings.TrimSpace(ip)
+	if strings.Contains(ip, "/") {
+		p, err := netip.ParsePrefix(ip)
+		if err != nil {
+			return "", ErrInvalidIP
+		}
+		return p.String(), nil
+	}
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
 		return "", ErrInvalidIP
 	}
-	return parsed.String(), nil
+	return addr.String(), nil
 }
 
 // AddWhitelistIP 新增白名单 IP（按 ip 唯一键 upsert，重复提交更新备注与操作者）
