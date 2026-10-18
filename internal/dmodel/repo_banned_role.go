@@ -34,22 +34,6 @@ func AddBannedRole(ctx context.Context, roleID, reason, operator string) error {
 	}).Create(&BannedRole{RoleID: roleID, Reason: reason, Operator: operator}).Error
 }
 
-// HasBannedRole 查询角色是否被封禁
-func HasBannedRole(ctx context.Context, roleID string) (bool, error) {
-	if roleID == "" {
-		return false, nil
-	}
-	db, err := getDB(ctx)
-	if err != nil {
-		return false, err
-	}
-	var n int64
-	if err := db.WithContext(ctx).Model(&BannedRole{}).Where("role_id = ?", roleID).Count(&n).Error; err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
-
 // DelBannedRole 解除角色封禁，返回影响行数
 func DelBannedRole(ctx context.Context, roleID string) (int64, error) {
 	if roleID == "" {

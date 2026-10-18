@@ -33,9 +33,9 @@ type BlacklistIP struct {
 
 func (BlacklistIP) TableName() string { return "blacklist_ip" }
 
-// normalizeIP 规范化 IP 或 CIDR：普通 IP 转 netip 规范字符串；CIDR 转
+// NormalizeIP 规范化 IP 或 CIDR：普通 IP 转 netip 规范字符串；CIDR 转
 // netip.Prefix 规范字符串（保留掩码位数）。非法返回 ErrInvalidIP。
-func normalizeIP(ip string) (string, error) {
+func NormalizeIP(ip string) (string, error) {
 	ip = strings.TrimSpace(ip)
 	if strings.Contains(ip, "/") {
 		p, err := netip.ParsePrefix(ip)
@@ -53,7 +53,7 @@ func normalizeIP(ip string) (string, error) {
 
 // AddWhitelistIP 新增白名单 IP（按 ip 唯一键 upsert，重复提交更新备注与操作者）
 func AddWhitelistIP(ctx context.Context, ip, remark, operator string) error {
-	ip, err := normalizeIP(ip)
+	ip, err := NormalizeIP(ip)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func AddWhitelistIP(ctx context.Context, ip, remark, operator string) error {
 
 // DelWhitelistIP 删除白名单 IP，返回影响行数
 func DelWhitelistIP(ctx context.Context, ip string) (int64, error) {
-	ip, err := normalizeIP(ip)
+	ip, err := NormalizeIP(ip)
 	if err != nil {
 		return 0, err
 	}
@@ -81,26 +81,9 @@ func DelWhitelistIP(ctx context.Context, ip string) (int64, error) {
 	return res.RowsAffected, res.Error
 }
 
-// HasWhitelistIP 查询 IP 是否在白名单
-func HasWhitelistIP(ctx context.Context, ip string) (bool, error) {
-	ip, err := normalizeIP(ip)
-	if err != nil {
-		return false, err
-	}
-	db, err := getDB(ctx)
-	if err != nil {
-		return false, err
-	}
-	var n int64
-	if err := db.WithContext(ctx).Model(&WhitelistIP{}).Where("ip = ?", ip).Count(&n).Error; err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
-
 // AddBlacklistIP 新增黑名单 IP（按 ip 唯一键 upsert，重复提交更新备注与操作者）
 func AddBlacklistIP(ctx context.Context, ip, remark, operator string) error {
-	ip, err := normalizeIP(ip)
+	ip, err := NormalizeIP(ip)
 	if err != nil {
 		return err
 	}
@@ -116,7 +99,7 @@ func AddBlacklistIP(ctx context.Context, ip, remark, operator string) error {
 
 // DelBlacklistIP 删除黑名单 IP，返回影响行数
 func DelBlacklistIP(ctx context.Context, ip string) (int64, error) {
-	ip, err := normalizeIP(ip)
+	ip, err := NormalizeIP(ip)
 	if err != nil {
 		return 0, err
 	}
@@ -126,23 +109,6 @@ func DelBlacklistIP(ctx context.Context, ip string) (int64, error) {
 	}
 	res := db.WithContext(ctx).Where("ip = ?", ip).Delete(&BlacklistIP{})
 	return res.RowsAffected, res.Error
-}
-
-// HasBlacklistIP 查询 IP 是否在黑名单
-func HasBlacklistIP(ctx context.Context, ip string) (bool, error) {
-	ip, err := normalizeIP(ip)
-	if err != nil {
-		return false, err
-	}
-	db, err := getDB(ctx)
-	if err != nil {
-		return false, err
-	}
-	var n int64
-	if err := db.WithContext(ctx).Model(&BlacklistIP{}).Where("ip = ?", ip).Count(&n).Error; err != nil {
-		return false, err
-	}
-	return n > 0, nil
 }
 
 // ListWhitelistIP 白名单列表（按 id 升序；limit<=0 不限制；管理列表接口与 ACL 快照全量加载共用）

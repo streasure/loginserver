@@ -681,22 +681,14 @@ func (s *AclService) storeServers(ctx context.Context, list []dmodel.ServerInfo)
 	}
 }
 
-// normalizeAclIP 规范化 IP 或 CIDR：纯 IP 转 netip 规范字符串；CIDR 转
-// netip.Prefix 规范字符串。非法返回 ok=false。
+// normalizeAclIP 规范化 IP 或 CIDR（委托 dmodel.NormalizeIP，单一实现）。
+// 非法返回 ok=false。
 func normalizeAclIP(ip string) (string, bool) {
-	ip = strings.TrimSpace(ip)
-	if strings.Contains(ip, "/") {
-		p, err := netip.ParsePrefix(ip)
-		if err != nil {
-			return "", false
-		}
-		return p.String(), true
-	}
-	addr, err := netip.ParseAddr(ip)
+	norm, err := dmodel.NormalizeIP(ip)
 	if err != nil {
 		return "", false
 	}
-	return addr.String(), true
+	return norm, true
 }
 
 // parseAclAddr 解析查询参数为 netip.Addr（仅接受纯 IP，CIDR 作为查询参数无意义）

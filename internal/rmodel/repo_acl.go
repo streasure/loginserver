@@ -8,12 +8,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// AclEntry ACL 缓存条目。ver 为写入时的全局版本号（acl:gen 计数），
-// hit 为判定结果（含负缓存：不在名单也缓存，避免反复回源）。
+// AclEntry ACL 缓存条目。ver 为写入时的全局版本号（acl:gen 计数）；
 // 读侧本地版本快照低于 ver 时条目视为过期并回源。
 type AclEntry struct {
 	Ver  int64           `json:"ver"`
-	Hit  bool            `json:"hit"`
 	Data json.RawMessage `json:"data,omitempty"` // servers 列表等大条目负载
 }
 

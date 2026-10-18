@@ -153,20 +153,17 @@ func DelBannedRole(c *gin.Context) {
 	c.JSON(http.StatusOK, uhttp.Success(true))
 }
 
-// aclListLimit 解析 ?limit=（默认/上限 1000；非法按默认）
-func aclListLimit(c *gin.Context) int {
-	v := c.Query("limit")
-	if v == "" {
-		return aclListDefaultLimit
+// listLimit 解析 ?limit=（缺省/非法/非正用 def，超上限钳到 max）。
+// ACL 名单与会话扫描列表共用同一解析语义。
+func listLimit(c *gin.Context, def, max int) int {
+	v, err := strconv.Atoi(c.Query("limit"))
+	if err != nil || v <= 0 {
+		return def
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return aclListDefaultLimit
+	if v > max {
+		return max
 	}
-	if n > aclListMaxLimit {
-		return aclListMaxLimit
-	}
-	return n
+	return v
 }
 
 // ListWhitelistIPs 白名单列表（直查 MySQL，需管理 token）
@@ -174,7 +171,7 @@ func ListWhitelistIPs(c *gin.Context) {
 	if !checkAdminToken(c) {
 		return
 	}
-	rows, err := service.GetAclService().ListWhiteIPs(c.Request.Context(), aclListLimit(c))
+	rows, err := service.GetAclService().ListWhiteIPs(c.Request.Context(), listLimit(c, aclListDefaultLimit, aclListMaxLimit))
 	if err != nil {
 		tlog.Error(c.Request.Context(), "list whitelist failed err:%v", err)
 		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeAclFailed, "list whitelist failed"))
@@ -188,7 +185,7 @@ func ListBlacklistIPs(c *gin.Context) {
 	if !checkAdminToken(c) {
 		return
 	}
-	rows, err := service.GetAclService().ListBlackIPs(c.Request.Context(), aclListLimit(c))
+	rows, err := service.GetAclService().ListBlackIPs(c.Request.Context(), listLimit(c, aclListDefaultLimit, aclListMaxLimit))
 	if err != nil {
 		tlog.Error(c.Request.Context(), "list blacklist failed err:%v", err)
 		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeAclFailed, "list blacklist failed"))
@@ -202,7 +199,7 @@ func ListBannedRoles(c *gin.Context) {
 	if !checkAdminToken(c) {
 		return
 	}
-	rows, err := service.GetAclService().ListBannedRoles(c.Request.Context(), aclListLimit(c))
+	rows, err := service.GetAclService().ListBannedRoles(c.Request.Context(), listLimit(c, aclListDefaultLimit, aclListMaxLimit))
 	if err != nil {
 		tlog.Error(c.Request.Context(), "list banned roles failed err:%v", err)
 		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeAclFailed, "list banned roles failed"))
