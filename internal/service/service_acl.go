@@ -15,6 +15,7 @@ import (
 	"github.com/streasure/loginserver/internal/dmodel"
 	"github.com/streasure/loginserver/internal/rmodel"
 	"github.com/streasure/util/component"
+	"github.com/streasure/util/panicutil"
 	"github.com/streasure/util/tlog"
 	"golang.org/x/sync/singleflight"
 )
@@ -224,7 +225,9 @@ func (s *AclService) Init() error {
 // Start 组件启动：后台 gen 轮询 + 周期全量兜底重载
 func (s *AclService) Start() error {
 	s.stopCh = make(chan struct{})
-	go s.refreshLoop()
+	// ACL gen 轮询 + TTL 兜底重载的常驻循环：panic 不得静默停摆（黑白名单/封禁热更新全靠它），
+	// 由 GoLoop 记日志并退避重启；stopCh 关闭时循环体正常返回，不再重启。
+	panicutil.GoLoop(context.Background(), "service.acl.refreshLoop", s.refreshLoop)
 	return nil
 }
 
