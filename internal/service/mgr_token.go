@@ -55,6 +55,11 @@ func (m *TokenMgr) Get(accountId string) (token string, ok bool) {
 	return m.cache.Get(accountId)
 }
 
+// Enabled 返回进程内缓存是否生效（ValidateTokenCacheTtl 未配置/非法时禁用）
+func (m *TokenMgr) Enabled() bool {
+	return m.cache != nil
+}
+
 // Set 写入当前窗口；缓存禁用时为空操作
 func (m *TokenMgr) Set(accountId, token string) {
 	if m.cache == nil {

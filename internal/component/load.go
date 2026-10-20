@@ -7,7 +7,8 @@ import (
 
 // LoadComponent 将 uload 自适应准入的 Obtain/Release 挂载到组件生命周期。
 // util 解耦后 ugin/ugrpc 不再隐式接线：gin 中间件经 ugin.WithPreMiddleware
-// (uload.Middleware()) 注入，gRPC 拦截器经 ugrpc.WithUnaryInterceptors 注入。
+// (uload.Middleware()) 注入，gRPC 拦截器经 ugrpc.WithGrpcOptions
+// (grpc.ChainUnaryInterceptor(uload.UnaryServerInterceptor(), ...)) 注入。
 type LoadComponent struct {
 	component.BaseComponent
 	cfg     uload.Config

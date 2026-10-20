@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -433,5 +434,55 @@ func TestAclCIDRApplyLocal(t *testing.T) {
 	// 非法 CIDR
 	if err := svc.AddBlackIP(ctx, "10.0.0.0/33", "test", "op"); !errors.Is(err, dmodel.ErrInvalidIP) {
 		t.Errorf("invalid cidr: got %v, want ErrInvalidIP", err)
+	}
+}
+
+// 并发写不丢更新：多 goroutine 并发 applyLocal 后，快照必须包含全部增量，
+// 且 snapshot.gen 与 redis gen 一致（否则 pollGen 判"无差异"失明到 cacheTtl）。
+// 这是 writeMu 串行化（a61426b #1）的回归防护——无锁实现下后写覆盖先写必挂本用例。
+func TestAclConcurrentApplyLocalNoLostUpdate(t *testing.T) {
+	ctx := context.Background()
+	cache := newFakeAclCache()
+	store := newFakeAclStore()
+	svc := newTestAclService(cache, store)
+	loadTestSnapshot(t, svc)
+	svc.writeRole = func(ctx context.Context, roleID, reason, operator string, add bool) error {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		if add {
+			store.roles[roleID] = struct{}{}
+		} else {
+			delete(store.roles, roleID)
+		}
+		return nil
+	}
+
+	const n = 32
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			roleID := fmt.Sprintf("concurrent-role-%02d", i)
+			if err := svc.AddBannedRole(ctx, roleID, "r", "op"); err != nil {
+				t.Errorf("AddBannedRole %s: %v", roleID, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	d := svc.snap.Load()
+	if d == nil {
+		t.Fatal("snapshot nil after concurrent writes")
+	}
+	if len(d.roles) != n {
+		t.Errorf("snapshot roles = %d, want %d（并发写丢失更新）", len(d.roles), n)
+	}
+	redisGen, err := cache.GetGen(ctx)
+	if err != nil {
+		t.Fatalf("GetGen: %v", err)
+	}
+	if d.gen != redisGen {
+		t.Errorf("snapshot.gen = %d, want redis gen %d（gen 不一致则 pollGen 失明）", d.gen, redisGen)
 	}
 }

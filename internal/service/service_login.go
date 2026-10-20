@@ -99,6 +99,10 @@ func (s *LoginService) tokenValid(ctx context.Context, accountId, loginToken str
 // PrefetchLoginTokens 批量预取缺失的 loginToken 到进程内缓存（BatchValidate 等批量校验前置）。
 // 已命中缓存的条目跳过；MGET 合并一次往返，失败仅告警（调用方逐条回源路径兜底）。
 func (s *LoginService) PrefetchLoginTokens(ctx context.Context, accountIds []string) {
+	// 缓存禁用时预取无处可存（后续校验仍逐条回源），跳过以免每批多一次无用 MGET
+	if !GetTokenManager().Enabled() {
+		return
+	}
 	var missing []string
 	for _, id := range accountIds {
 		if _, ok := GetTokenManager().Get(id); !ok {
