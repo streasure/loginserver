@@ -36,7 +36,8 @@ func (s *LoginService) GenerateLoginToken(ctx context.Context, accountId string)
 
 	GetTokenManager().Set(accountId, loginToken)
 
-	tlog.Info(ctx, "account:%s generate login token:%s success", accountId, loginToken)
+	// token 是 bearer 凭证，不落日志
+	tlog.Info(ctx, "account:%s generate login token success", accountId)
 
 	return loginToken, nil
 }
@@ -77,6 +78,11 @@ func (s *LoginService) tokenValid(ctx context.Context, accountId, loginToken str
 		if err != nil {
 			return nil, err
 		}
+		// 回源期间缓存可能已被并发轮换填充（GenerateLoginToken 先写 Redis 再 Set 本地）：
+		// 缓存现值与回源值不同说明有更新的 token 已落地，不回填旧值，避免旧 token 复活
+		if cur, ok := GetTokenManager().Get(accountId); ok && cur != storedToken {
+			return storedToken, nil
+		}
 		GetTokenManager().Set(accountId, storedToken)
 		return storedToken, nil
 	})
@@ -90,6 +96,32 @@ func (s *LoginService) tokenValid(ctx context.Context, accountId, loginToken str
 	return storedToken == loginToken, nil
 }
 
+// PrefetchLoginTokens 批量预取缺失的 loginToken 到进程内缓存（BatchValidate 等批量校验前置）。
+// 已命中缓存的条目跳过；MGET 合并一次往返，失败仅告警（调用方逐条回源路径兜底）。
+func (s *LoginService) PrefetchLoginTokens(ctx context.Context, accountIds []string) {
+	var missing []string
+	for _, id := range accountIds {
+		if _, ok := GetTokenManager().Get(id); !ok {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	tokens, err := rmodel.GetLoginTokenModel().GetLoginTokens(context.WithoutCancel(ctx), missing)
+	if err != nil {
+		tlog.Warn(ctx, "prefetch login tokens failed count:%d err:%v", len(missing), err)
+		return
+	}
+	for id, tok := range tokens {
+		// 与 tokenValid 回源同理：并发轮换已写入更新值时不回填旧值
+		if cur, ok := GetTokenManager().Get(id); ok && cur != tok {
+			continue
+		}
+		GetTokenManager().Set(id, tok)
+	}
+}
+
 func (s *LoginService) BindAccount(ctx context.Context, openId string, ptId int32) (string, error) {
 	accountId, err := rmodel.GetAccountModel().GetAccount(ctx, openId, ptId)
 	if err != nil {
@@ -99,12 +131,24 @@ func (s *LoginService) BindAccount(ctx context.Context, openId string, ptId int3
 		return accountId, nil
 	}
 
-	accountId = uuid.NewUUID()
-	if err := rmodel.GetAccountModel().SetAccount(ctx, openId, ptId, accountId); err != nil {
+	// SETNX 防并发首登双绑：两个并发 miss 各生成 UUID 后无条件 SET 会互相覆盖，
+	// 导致先返回的客户端拿到的 accountId 与最终绑定不一致
+	newID := uuid.NewUUID()
+	created, err := rmodel.GetAccountModel().SetAccountNX(ctx, openId, ptId, newID)
+	if err != nil {
 		return "", err
 	}
-
-	tlog.Info(ctx, "bind openId:%s ptId:%d accountId:%s success", openId, ptId, accountId)
-
+	if created {
+		tlog.Info(ctx, "bind openId:%s ptId:%d accountId:%s success", openId, ptId, newID)
+		return newID, nil
+	}
+	// 竞争失败：读取赢家的绑定，保证同一 openId 始终收敛到同一个 accountId
+	accountId, err = rmodel.GetAccountModel().GetAccount(ctx, openId, ptId)
+	if err != nil {
+		return "", err
+	}
+	if len(accountId) == 0 {
+		return "", errors.New("account bind race lost but key missing")
+	}
 	return accountId, nil
 }

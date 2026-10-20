@@ -159,7 +159,10 @@ func (p *SgateClientPool) KickAccounts(ctx context.Context, sgateID string, acco
 }
 
 // kickIPAfterBan 封禁 IP 后 best-effort 踢人。
-// 纯 IP：用 sess:ip:{exact} 会话索引路由到持有该 IP 连接的 sgate。
+// 纯 IP：用 sess:ip:{exact} 会话索引路由到持有该 IP 连接的 sgate，
+//
+//	索引缺失/查询失败时兜底全量下发（每台本地匹配）。
+//
 // CIDR：优先 sess:ip24 前缀索引精确路由（/24 及更小）；
 //
 //	/23 及更大网段或 IPv6 → 向全部已知 sgate 下发（每台本地前缀匹配）。
@@ -170,11 +173,14 @@ func kickIPAfterBan(ctx context.Context, ip string) (kicked int) {
 	if pool == nil {
 		return 0
 	}
+	// 踢人链路不绑定调用方生命周期：admin/gRPC 请求取消或短 deadline
+	// 不应掐断循环内后续 sgate 的 Kick（每台 2s 超时各自独立）
+	base := context.WithoutCancel(ctx)
 	var sgates []string
 	if isCIDR(ip) {
-		routed, needAll, err := rmodel.SessionSgatesByCIDR(ctx, ip)
+		routed, needAll, err := rmodel.SessionSgatesByCIDR(base, ip)
 		if err != nil {
-			tlog.Warn(ctx, "kickAfterBan cidr route failed ip:%s err:%v", ip, err)
+			tlog.Warn(base, "kickAfterBan cidr route failed ip:%s err:%v", ip, err)
 		}
 		if needAll || len(routed) == 0 {
 			sgates = pool.AllIDs()
@@ -183,23 +189,28 @@ func kickIPAfterBan(ctx context.Context, ip string) (kicked int) {
 		}
 	} else {
 		var err error
-		sgates, err = rmodel.SessionSgatesByIP(ctx, ip)
+		sgates, err = rmodel.SessionSgatesByIP(base, ip)
 		if err != nil {
-			tlog.Warn(ctx, "kickAfterBan session lookup failed ip:%s err:%v", ip, err)
+			tlog.Warn(base, "kickAfterBan session lookup failed ip:%s err:%v", ip, err)
+		}
+		// 索引缺失/查询失败时兜底全量下发（无该 IP 连接的 sgate 本地匹配为 0，安全），
+		// 与 CIDR 分支的 AllIDs 语义对齐，避免"封禁落库成功但一台不踢"
+		if len(sgates) == 0 {
+			sgates = pool.AllIDs()
 		}
 	}
 	for _, sgateID := range sgates {
-		cctx, cancel := context.WithTimeout(ctx, kickTimeout)
+		cctx, cancel := context.WithTimeout(base, kickTimeout)
 		n, err := pool.KickIP(cctx, sgateID, ip, "blacklist")
 		cancel()
 		if err != nil {
-			tlog.Warn(ctx, "kickAfterBan KickIP failed sgate:%s ip:%s err:%v", sgateID, ip, err)
+			tlog.Warn(base, "kickAfterBan KickIP failed sgate:%s ip:%s err:%v", sgateID, ip, err)
 			continue
 		}
 		kicked += int(n)
 	}
 	if len(sgates) > 0 {
-		tlog.Info(ctx, "kickAfterBan done ip:%s sgates:%d kicked:%d cidr:%v", ip, len(sgates), kicked, isCIDR(ip))
+		tlog.Info(base, "kickAfterBan done ip:%s sgates:%d kicked:%d cidr:%v", ip, len(sgates), kicked, isCIDR(ip))
 	}
 	return kicked
 }
@@ -210,28 +221,30 @@ func isCIDR(s string) bool {
 }
 
 // kickAccountAfterBan 封禁账号后 best-effort 踢人：会话缓存解析涉及的 sgate，
-// 逐台 KickAccounts（每台 2s 超时）。权威库已落库，失败仅告警计数、不回滚
+// 逐台 KickAccounts（每台 2s 超时）。权威库已落库，失败仅告警计数、不回滚。
+// 与 kickIPAfterBan 一致：踢人链路不绑定调用方生命周期
 func kickAccountAfterBan(ctx context.Context, accountID string) (kicked int) {
 	pool := GetSgateClientPool()
 	if pool == nil {
 		return 0
 	}
-	sgates, err := rmodel.SessionSgatesByAccount(ctx, accountID)
+	base := context.WithoutCancel(ctx)
+	sgates, err := rmodel.SessionSgatesByAccount(base, accountID)
 	if err != nil {
-		tlog.Warn(ctx, "kickAccountAfterBan session lookup failed account:%s err:%v", accountID, err)
+		tlog.Warn(base, "kickAccountAfterBan session lookup failed account:%s err:%v", accountID, err)
 	}
 	for _, sgateID := range sgates {
-		cctx, cancel := context.WithTimeout(ctx, kickTimeout)
+		cctx, cancel := context.WithTimeout(base, kickTimeout)
 		n, err := pool.KickAccounts(cctx, sgateID, []string{accountID}, "ban")
 		cancel()
 		if err != nil {
-			tlog.Warn(ctx, "kickAccountAfterBan KickAccounts failed sgate:%s account:%s err:%v", sgateID, accountID, err)
+			tlog.Warn(base, "kickAccountAfterBan KickAccounts failed sgate:%s account:%s err:%v", sgateID, accountID, err)
 			continue
 		}
 		kicked += int(n)
 	}
 	if len(sgates) > 0 {
-		tlog.Info(ctx, "kickAccountAfterBan done account:%s sgates:%d kicked:%d", accountID, len(sgates), kicked)
+		tlog.Info(base, "kickAccountAfterBan done account:%s sgates:%d kicked:%d", accountID, len(sgates), kicked)
 	}
 	return kicked
 }

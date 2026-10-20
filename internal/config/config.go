@@ -140,6 +140,11 @@ func validate(cfg *Config) error {
 	if cfg.Acl.AdminToken == "" {
 		return errors.New("acl.adminToken is required")
 	}
+	// sgate.internalToken 是封禁踢人链路（KickIP/KickAccounts）的内部鉴权凭据：
+	// 空值会导致拨号后全部 Kick 被 sgate 拒绝（封禁踢人静默失效），必须启动即失败
+	if cfg.Sgate.InternalToken == "" {
+		return errors.New("sgate.internalToken is required")
+	}
 	for _, proxy := range cfg.Acl.TrustedProxies {
 		if strings.Contains(proxy, "/") {
 			if _, _, err := net.ParseCIDR(proxy); err != nil {

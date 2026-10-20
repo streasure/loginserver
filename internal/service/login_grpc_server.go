@@ -58,6 +58,13 @@ func (h *LoginServer) BatchValidateLoginTokens(
 		return nil, status.Errorf(codes.InvalidArgument, "batch size %d exceeds limit %d", len(items), maxBatchValidateItems)
 	}
 	valid := make([]bool, len(items))
+	// 批量预取：进程内缓存 miss 的 token 一次 MGET 合并回源。
+	// 不预取时 500 条 miss 即 500 次串行 GET，叠加 Redis 超时可把单个 RPC 拖到秒级
+	ids := make([]string, len(items))
+	for i, item := range items {
+		ids[i] = item.GetAccountId()
+	}
+	GetLoginService().PrefetchLoginTokens(ctx, ids)
 	for i, item := range items {
 		v, err := GetLoginService().ValidateLoginToken(ctx, item.GetAccountId(), item.GetLoginToken())
 		if err != nil {

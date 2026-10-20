@@ -44,6 +44,9 @@ acl:
   cacheTtl: 5m
   genRefresh: 2s
   adminToken: "test-admin-token"
+
+sgate:
+  internalToken: "test-sgate-internal-token"
 `
 
 // 默认 redis 段：实例 + 读写超时（连接池参数未配置 → 0/空 = uredis 默认值）

@@ -8,6 +8,7 @@ import (
 	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/ugrpc"
+	"github.com/streasure/util/uload"
 	"google.golang.org/grpc"
 
 	loginproto "github.com/streasure/protocol/loginserver"
@@ -33,9 +34,10 @@ func NewLoginGrpcServer() *LoginGrpcServer {
 	// 创建通用 gRPC 服务器：身份字段（belong/serverType/zone/serverId）供 etcd
 	// 服务注册使用（ServiceKey/ServerId）；只写端口时监听所有网卡，
 	// 对外通告地址（etcd 注册用）通过 server.AdvertiseAddr() 自动拼接本机 IP。
-	// 在构造函数创建（而非 Init），etcd 组件创建时即可读取服务身份
-	// AdminAuthUnaryInterceptor：管理类 RPC（封禁/移除等）要求 metadata x-admin-token，
-	// 登录校验/健康检查免鉴权；经 WithGrpcOptions 追加到 util 内置拦截器链之后
+	// 在构造函数创建（而非 Init），etcd 组件创建时即可读取服务身份。
+	// 拦截器链：uload.UnaryServerInterceptor 最外（过载准入，与 HTTP 侧 uload.Middleware
+	// 共享同一状态机；健康检查方法免准入）→ AdminAuthUnaryInterceptor（管理类 RPC 鉴权）。
+	// 经 WithGrpcOptions 追加到 util 内置拦截器链之后
 	s.server = ugrpc.NewServer(
 		ugrpc.WithName("login-server"),
 		ugrpc.WithAddr(netutil.PortAddr(cfg.Ports.GrpcServiceAddr)),
@@ -45,7 +47,7 @@ func NewLoginGrpcServer() *LoginGrpcServer {
 		ugrpc.WithServerId(cfg.ServerId),
 		ugrpc.WithHealth(true),
 		ugrpc.WithAPM(false), // 与 HTTP 侧一致，关闭 APM 全链路追踪
-		ugrpc.WithGrpcOptions(grpc.ChainUnaryInterceptor(AdminAuthUnaryInterceptor)),
+		ugrpc.WithGrpcOptions(grpc.ChainUnaryInterceptor(uload.UnaryServerInterceptor(), AdminAuthUnaryInterceptor)),
 	)
 
 	// 注册业务 handler

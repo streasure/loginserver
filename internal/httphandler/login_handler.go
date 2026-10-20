@@ -80,7 +80,8 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	tlog.Info(ctx, "login success account:%s token:%s", accountId, loginToken)
+	// token 是 bearer 凭证，不落日志
+	tlog.Info(ctx, "login success account:%s", accountId)
 
 	c.JSON(http.StatusOK, uhttp.Success(dto.LoginAck{
 		AccountId:  accountId,
@@ -106,12 +107,13 @@ func ValidateLoginToken(c *gin.Context) {
 
 	valid, err := loginService.ValidateLoginToken(ctx, req.AccountId, req.LoginToken)
 	if err != nil {
-		tlog.Error(ctx, "validate account:%s login token:%s error:%v", req.AccountId, req.LoginToken, err)
+		// 不打印客户端提交的 token（bearer 凭证，失败路径更需防泄露）
+		tlog.Error(ctx, "validate account:%s login token error:%v", req.AccountId, err)
 		c.JSON(http.StatusInternalServerError, uhttp.Failure(dto.CodeTokenGenFailed, "validate login token failed"))
 		return
 	}
 
-	tlog.Info(ctx, "validate account:%s login token:%s ok", req.AccountId, req.LoginToken)
+	tlog.Info(ctx, "validate account:%s login token ok", req.AccountId)
 
 	c.JSON(http.StatusOK, uhttp.Success(dto.ValidateLoginTokenAck{
 		Valid: valid,

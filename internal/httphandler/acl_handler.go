@@ -1,6 +1,7 @@
 package httphandler
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strconv"
@@ -38,9 +39,12 @@ func init() {
 	ugin.RegisterController("/api/v1/servers", &ugin.HttpMapping{Method: http.MethodGet, Controller: ListServers})
 }
 
-// checkAdminToken 校验管理接口 token（X-Admin-Token），失败写 401 并返回 false
+// checkAdminToken 校验管理接口 token（X-Admin-Token），失败写 401 并返回 false。
+// 常数时间比较，防时序侧信道逐字节探测
 func checkAdminToken(c *gin.Context) bool {
-	if c.GetHeader(adminTokenHeader) != config.GetConfig().Acl.AdminToken {
+	got := c.GetHeader(adminTokenHeader)
+	want := config.GetConfig().Acl.AdminToken
+	if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 		c.JSON(http.StatusUnauthorized, uhttp.Failure(dto.CodeUnauthorized, "unauthorized"))
 		return false
 	}

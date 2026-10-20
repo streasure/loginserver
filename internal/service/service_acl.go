@@ -162,7 +162,8 @@ func defaultAclWriteRole(ctx context.Context, roleID, reason, operator string, a
 //
 // 黑白名单/封禁角色：进程内全量快照，读路径零存储依赖（登录高峰不触 MySQL/Redis）。
 //   - 启动 Init 全量加载 MySQL，失败即失败启动（与 MySQL 启动依赖一致）
-//   - 写路径：MySQL 事实源 → 本地快照即时应用（copy-on-write，读己之写）→ redis INCR 全局版本广播
+//   - 写路径：MySQL 事实源 → 本地快照即时应用（copy-on-write，读己之写）→ redis INCR 全局版本广播；
+//     applyLocal 与 reload 的快照替换全程持 writeMu 串行化（并发写不丢更新、不被陈旧全量覆盖）
 //   - 其他节点后台轮询 gen（genRefresh 周期），发现差异 singleflight 全量重载；
 //     先读 gen 再读库（写路径先写库再 INCR），加载期间 gen 再涨则下轮继续，不会丢更新
 //   - redis 故障：读路径不受影响；gen 轮询告警跳过（继续用现有快照服务），
@@ -183,6 +184,12 @@ type AclService struct {
 	genAt    atomic.Int64            // gen 最近确认时间（unixnano）
 	reloadSF singleflight.Group      // 快照全量重载合并
 	sf       singleflight.Group      // servers 回源合并
+
+	// writeMu 串行化快照写路径（applyLocal 增量 + reload 全量）：
+	// 并发写者都从同一旧快照 clone-修改-store 会互相覆盖丢更新，且覆盖后
+	// snapshot.gen 与 redis gen 相等使 pollGen 失明（最长 cacheTtl 不收敛）。
+	// 写路径均为管理面低频操作（admin/gRPC 写 + 周期重载），锁开销可忽略。
+	writeMu sync.Mutex
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -500,7 +507,11 @@ func (s *AclService) snapshot(ctx context.Context) (*aclData, error) {
 // applyLocal 写路径落地：广播版本（INCR）后在本地快照上即时应用增量（读己之写）。
 // redis INCR 失败时本地 gen 仍自增先行（其他节点待 cacheTtl 兜底重载收敛）。
 // id 已是 normalizeAclIP 规范化后的字符串（纯 IP 或 CIDR）。
+// 全程持有 writeMu：并发写者串行化，后者 clone 到前者结果，不丢更新；
+// 也与 reload 的 Store 互斥，避免增量覆盖旧版全量快照。
 func (s *AclService) applyLocal(ctx context.Context, kind, id string, add bool) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	gen := s.publishGen(ctx)
 	old := s.snap.Load()
 	next := newAclData(gen)
@@ -543,7 +554,8 @@ func (s *AclService) publishGen(ctx context.Context) int64 {
 	gen, err := s.cache.IncrGen(ctx)
 	if err != nil {
 		tlog.Warn(ctx, "acl: incr gen failed err:%v（其他节点待 cacheTtl 兜底收敛）", err)
-		gen = s.gen.Load() + 1
+		// Add 原子自增：并发失败路径下多个写者不会拿到相同 gen
+		gen = s.gen.Add(1)
 	}
 	s.gen.Store(gen)
 	s.genAt.Store(time.Now().UnixNano())
@@ -555,6 +567,10 @@ func (s *AclService) publishGen(ctx context.Context) int64 {
 func (s *AclService) reload(ctx context.Context) error {
 	start := time.Now()
 	_, err, _ := s.reloadSF.Do("snapshot", func() (any, error) {
+		// 全程持有 writeMu：读库期间 applyLocal 不会基于旧快照做增量，
+		// 本 Store 也不会被并发增量覆盖（防"陈旧全量 vs 最新增量"互相覆盖丢更新）
+		s.writeMu.Lock()
+		defer s.writeMu.Unlock()
 		// 重载不绑定调用方生命周期：轮询/请求取消不应中断加载
 		loaderCtx := context.WithoutCancel(ctx)
 		gen, genErr := s.cache.GetGen(loaderCtx)

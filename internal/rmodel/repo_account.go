@@ -42,16 +42,18 @@ func (m *AccountModel) GetAccount(ctx context.Context, openId string, ptId int32
 	return accountId, nil
 }
 
-// SetAccount 绑定 openId+ptId → accountId，永不过期
-func (m *AccountModel) SetAccount(ctx context.Context, openId string, ptId int32, accountId string) error {
+// SetAccountNX 绑定 openId+ptId → accountId（SETNX，永不过期）。
+// created=true 本次写入成功；false 表示已存在绑定（并发首登竞争失败，调用方应读取赢家绑定）。
+func (m *AccountModel) SetAccountNX(ctx context.Context, openId string, ptId int32, accountId string) (bool, error) {
 	key := m.genAccountKey(openId, ptId)
 	cli, err := GetRedisClient()
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err = cli.Set(ctx, key, accountId, 0).Err(); err != nil {
-		tlog.Error(ctx, "redis set account failed openId:%s ptId:%d account:%s err:%v", openId, ptId, accountId, err)
-		return err
+	created, err := cli.SetNX(ctx, key, accountId, 0).Result()
+	if err != nil {
+		tlog.Error(ctx, "redis setnx account failed openId:%s ptId:%d account:%s err:%v", openId, ptId, accountId, err)
+		return false, err
 	}
-	return nil
+	return created, nil
 }

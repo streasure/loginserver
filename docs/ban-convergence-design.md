@@ -279,3 +279,23 @@ v2.1 已完成（2026-10-16）：Session Unbind + CIDR 精确路由 + Kick notif
 | 16 | 反代真实 IP | **v2.1 落地**：WS trustedProxies + TCP PROXY protocol v1，默认关闭 |
 | 17 | 关键消息可靠投递 | **推迟**：Kick 场景已被登录校验+BatchValidate 兜底覆盖，不引入通用可靠性层 |
 | 18 | 全局 Session 表 | **否决**：Redis 三键+ip24 已满足路由，独立服务收益不成比例 |
+
+## 11. loginserver 健壮性加固（2026-10-20 审查修复批次）
+
+全仓实现审查后的 11 项修复（sgate 侧 12 项待修清单落地至 `sgate/TODO.md` 后续处理）：
+
+| # | 修复 | 说明 |
+|---|------|------|
+| 1 | ACL 快照写串行化 | `applyLocal` 与 `reload` 的快照替换全程持 `writeMu`：并发写者不再从同一旧快照 clone 互相覆盖丢更新；`pollGen` 不再因 gen 相等失明（原最长 cacheTtl=5m 按错误快照服务）。`publishGen` 失败路径改 `s.gen.Add(1)` 原子自增 |
+| 2 | loginToken 脱敏 | 6 处日志不再打印 token 明文（bearer 凭证；validate 失败路径连客户端提交值也不落日志） |
+| 3 | 踢人链路 ctx 解耦 | `kickIPAfterBan`/`kickAccountAfterBan` 用 `context.WithoutCancel`：admin 请求取消/短 deadline 不再掐断循环内后续 sgate 的 Kick（每台 2s 超时各自独立） |
+| 4 | 纯 IP 封禁全量兜底 | `SessionSgatesByIP` 缺失/失败时 fallback `pool.AllIDs()`（与 CIDR 分支对齐），消除"封禁落库成功但一台不踢" |
+| 5 | gRPC 接入 uload | `uload.UnaryServerInterceptor` 最外链（与 HTTP 侧 `uload.Middleware` 共享同一 Governor 状态机；健康检查方法免准入），BatchValidate 等热路径过载时返回 ResourceExhausted |
+| 6 | BatchValidate MGET | 新增 `PrefetchLoginTokens` 一次 MGET 合并回源（原 500 条 miss 即 500 次串行 GET，叠加 Redis 超时可把单 RPC 拖到秒级） |
+| 7 | BindAccount SETNX | openId+ptId 首绑改 `SetAccountNX`（SETNX）：并发首登不再各生成 UUID 互相覆盖出双 accountId；竞争失败方读取赢家绑定收敛到同一 id |
+| 8 | token 回源防旧值 | `tokenValid`/`PrefetchLoginTokens` 回填缓存前比对现值，缓存已有更新值时不回填旧 token（防轮换窗口内旧 token 复活/新 token 被拒） |
+| 9 | admin token 常数时间比较 | HTTP `checkAdminToken` 与 gRPC `AdminAuthUnaryInterceptor` 改 `subtle.ConstantTimeCompare`，防时序侧信道 |
+| 10 | NormalizeIP 掩码 | CIDR 先 `Masked()` 再转字符串：`1.2.3.4/24` 与 `1.2.3.0/24` 收敛为同一唯一键，等价写法删除可命中（存量未掩码 DB 行需手工归一） |
+| 11 | internalToken 必填 | `sgate.internalToken` 缺失时启动即失败（原空值拨号后 Kick 全部被 sgate 拒绝，封禁踢人静默失效） |
+
+验证：gofmt/build/vet/staticcheck/test 全绿；E2E 7/7（login→LoginGate→封禁→KickNotify(reason=ban code=403)→断连→Session Unbind 清零→sessions API→解封）。

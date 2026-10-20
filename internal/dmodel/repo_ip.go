@@ -33,8 +33,9 @@ type BlacklistIP struct {
 
 func (BlacklistIP) TableName() string { return "blacklist_ip" }
 
-// NormalizeIP 规范化 IP 或 CIDR：普通 IP 转 netip 规范字符串；CIDR 转
-// netip.Prefix 规范字符串（保留掩码位数）。非法返回 ErrInvalidIP。
+// NormalizeIP 规范化 IP 或 CIDR：普通 IP 转 netip 规范字符串；CIDR 先掩码掉
+// host bits 再转规范字符串（保证 1.2.3.4/24 与 1.2.3.0/24 收敛为同一唯一键，
+// 否则按"等价写法"删除会因 ip 等值匹配不中而残留）。非法返回 ErrInvalidIP。
 func NormalizeIP(ip string) (string, error) {
 	ip = strings.TrimSpace(ip)
 	if strings.Contains(ip, "/") {
@@ -42,7 +43,7 @@ func NormalizeIP(ip string) (string, error) {
 		if err != nil {
 			return "", ErrInvalidIP
 		}
-		return p.String(), nil
+		return p.Masked().String(), nil
 	}
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {

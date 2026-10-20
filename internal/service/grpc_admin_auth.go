@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 
 	"github.com/streasure/loginserver/internal/config"
 	"google.golang.org/grpc"
@@ -36,7 +37,8 @@ func AdminAuthUnaryInterceptor(
 	}
 	md, _ := metadata.FromIncomingContext(ctx)
 	got := md.Get(adminTokenMetadataKey)
-	if len(got) == 0 || got[0] != config.GetConfig().Acl.AdminToken {
+	// 常数时间比较，防时序侧信道逐字节探测
+	if len(got) == 0 || subtle.ConstantTimeCompare([]byte(got[0]), []byte(config.GetConfig().Acl.AdminToken)) != 1 {
 		return nil, status.Error(codes.Unauthenticated, "admin token required")
 	}
 	return handler(ctx, req)
