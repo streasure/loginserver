@@ -56,7 +56,9 @@ func parseSgateGRPCAddr(raw string) string {
 	return raw
 }
 
-// sgateSource 将 uetcd.Component 适配为 ugrpc.Source（消费方本地适配器，util 解耦 V5 约定）
+// sgateSource 将 uetcd.Component 适配为 ugrpc.Source（消费方本地适配器：地址为 JSON
+// 需 parseSgateGRPCAddr 变换，与 udiscovery.NewEtcd 的裸地址语义不同，故保留本地实现）；
+// OnServiceChange 返回 cancel（ugrpc.Source 契约，透传底层可退订）。
 type sgateSource struct {
 	c *uetcd.Component
 }
@@ -77,8 +79,8 @@ func (s sgateSource) ServiceSet() map[string]string {
 	return out
 }
 
-func (s sgateSource) OnServiceChange(cb func(event ugrpc.SourceEvent)) {
-	s.c.OnServiceChange(func(ev uetcd.ServiceEvent) {
+func (s sgateSource) OnServiceChange(cb func(event ugrpc.SourceEvent)) func() {
+	return s.c.OnServiceChange(func(ev uetcd.ServiceEvent) {
 		// register/deregister 统一解析（deregister 地址守卫比较需与池内 addr 同口径）
 		cb(ugrpc.SourceEvent{
 			Register:   ev.Type == uetcd.EventRegister,
