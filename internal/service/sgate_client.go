@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -12,6 +11,7 @@ import (
 
 	protoGw "github.com/streasure/protocol/gateway"
 	"github.com/streasure/util/component"
+	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/udiscovery"
 	"github.com/streasure/util/uetcd"
@@ -42,30 +42,9 @@ func GetSgateClientPool() *SgateClientPool {
 	return sgatePool
 }
 
-// sgateRegisterAddress 是 sgate etcd 注册地址的 JSON 结构（cluster_component.buildRegisterAddress）
-type sgateRegisterAddress struct {
-	IP   string `json:"ip"`
-	GRPC int    `json:"grpc"`
-}
-
-// parseSgateGRPCAddr 从 sgate 注册地址解析 gRPC 拨号地址（udiscovery 的地址变换函数）：
-// 非 JSON（未来改为纯地址注册）原样通过；JSON 但缺 ip/grpc 拨号要素或空地址视为不可用。
-func parseSgateGRPCAddr(raw string) (string, bool) {
-	if raw == "" {
-		return "", false
-	}
-	var addr sgateRegisterAddress
-	if err := json.Unmarshal([]byte(raw), &addr); err != nil {
-		return raw, true
-	}
-	if addr.IP != "" && addr.GRPC > 0 {
-		return fmt.Sprintf("%s:%d", addr.IP, addr.GRPC), true
-	}
-	return "", false
-}
-
 // NewSgateClientPool 创建并注册全局单例；discovery 为 SGATE:{zone} 的 etcd 组件。
-// 地址变换经 udiscovery.WithAddressTransform 在 Source 层统一作用于快照与事件。
+// 地址变换（netutil.ParseRegisterGRPCAddr，注册地址 JSON 契约）经
+// udiscovery.WithAddressTransform 在 Source 层统一作用于快照与事件。
 func NewSgateClientPool(discovery *uetcd.Component, internalToken string) *SgateClientPool {
 	p := &SgateClientPool{}
 	if sgatePoolInit.CompareAndSwap(false, true) {
@@ -81,7 +60,7 @@ func NewSgateClientPool(discovery *uetcd.Component, internalToken string) *Sgate
 		),
 	})
 	if discovery != nil {
-		p.source = udiscovery.NewEtcd(discovery, udiscovery.WithAddressTransform(parseSgateGRPCAddr))
+		p.source = udiscovery.NewEtcd(discovery, udiscovery.WithAddressTransform(netutil.ParseRegisterGRPCAddr))
 		p.pool.Attach(p.source)
 	}
 	return p
