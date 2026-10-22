@@ -3,12 +3,11 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/streasure/protocol/enums"
+	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/uconfig"
 	"github.com/streasure/util/udiscovery"
 	"github.com/streasure/util/uetcd"
@@ -157,11 +156,7 @@ func validate(cfg *Config) error {
 		return errors.New("sgate.internalToken is required")
 	}
 	for _, proxy := range cfg.Acl.TrustedProxies {
-		if strings.Contains(proxy, "/") {
-			if _, _, err := net.ParseCIDR(proxy); err != nil {
-				return fmt.Errorf("acl.trustedProxies %q is not a valid IP/CIDR", proxy)
-			}
-		} else if net.ParseIP(proxy) == nil {
+		if _, err := netutil.ParseIPOrPrefix(proxy); err != nil {
 			return fmt.Errorf("acl.trustedProxies %q is not a valid IP/CIDR", proxy)
 		}
 	}

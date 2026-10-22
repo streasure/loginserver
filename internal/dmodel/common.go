@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/ugorm"
 	"gorm.io/gorm"
 )
@@ -13,8 +14,8 @@ import (
 // dbKey 业务库在 loginserver.yaml db.configs 下的键名
 const dbKey = "logindb"
 
-// ErrInvalidIP 入参 IP 不是合法 IPv4/IPv6
-var ErrInvalidIP = errors.New("invalid ip")
+// ErrInvalidIP 入参 IP 不是合法 IPv4/IPv6（与 netutil 共享哨兵，errors.Is 互通）
+var ErrInvalidIP = netutil.ErrInvalidIP
 
 // ErrInvalidRoleID 入参角色 ID 为空
 var ErrInvalidRoleID = errors.New("invalid role id")
