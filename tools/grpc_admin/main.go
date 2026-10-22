@@ -9,6 +9,7 @@ import (
 	loginproto "github.com/streasure/protocol/loginserver"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
 
 // grpc_admin：模拟 sgate 调用 loginserver 的 ACL gRPC 接口（黑名单 IP / 封禁角色 增删）
@@ -25,6 +26,7 @@ func main() {
 	role := flag.String("role", "", "banned role id (accountId)")
 	reason := flag.String("reason", "", "ban reason")
 	operator := flag.String("operator", "sgate", "operator")
+	token := flag.String("token", "", "admin token (x-admin-token metadata; empty = 无鉴权,预期 Unauthenticated)")
 	flag.Parse()
 
 	conn, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -37,6 +39,9 @@ func main() {
 	client := loginproto.NewLoginServiceClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if *token != "" {
+		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("x-admin-token", *token))
+	}
 
 	switch *mode {
 	case "blacklist":
