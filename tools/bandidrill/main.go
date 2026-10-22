@@ -16,15 +16,16 @@ import (
 	"os"
 	"time"
 
+	"github.com/streasure/protocol/enums"
 	protoGw "github.com/streasure/protocol/gateway"
 	protoLogic "github.com/streasure/protocol/logic"
 	"google.golang.org/protobuf/proto"
 )
 
 const (
-	cmdLoginGate    int32 = 1000001
-	cmdLoginGateAck int32 = 1000002
-	cmdKickNotify   int32 = 1100009
+	cmdLoginGate    = int32(enums.Cmd_CMD_LOGIN_GATE_REQ)
+	cmdLoginGateAck = int32(enums.Cmd_CMD_LOGIN_GATE_ACK)
+	cmdKickNotify   = int32(enums.Cmd_CMD_KICK_NOTIFY)
 )
 
 func main() {
