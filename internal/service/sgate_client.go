@@ -13,6 +13,7 @@ import (
 	protoGw "github.com/streasure/protocol/gateway"
 	"github.com/streasure/util/component"
 	"github.com/streasure/util/tlog"
+	"github.com/streasure/util/udiscovery"
 	"github.com/streasure/util/uetcd"
 	"github.com/streasure/util/ugrpc"
 	"google.golang.org/grpc"
@@ -23,11 +24,12 @@ import (
 const kickTimeout = 2 * time.Second
 
 // SgateClientPool 泛型 gRPC 客户端池：按 sgate 实例缓存 Kick 连接，
-// 由 SGATE:{zone} 的 etcd Discovery 驱动（sgate 自注册 JSON 地址 → 解析出 gRPC 拨号地址）。
+// 由 SGATE:{zone} 的 etcd Discovery 驱动（sgate 自注册 JSON 地址 →
+// 经 udiscovery.WithAddressTransform 解析出 gRPC 拨号地址）。
 type SgateClientPool struct {
 	component.BaseComponent
 	pool   *ugrpc.Pool[protoGw.KickServiceClient]
-	source sgateSource
+	source ugrpc.Source
 }
 
 var (
@@ -46,51 +48,24 @@ type sgateRegisterAddress struct {
 	GRPC int    `json:"grpc"`
 }
 
-// parseSgateGRPCAddr 从 sgate 注册地址解析 gRPC 拨号地址 "ip:port"；
-// 非 JSON（未来改为纯地址注册）时原样返回
-func parseSgateGRPCAddr(raw string) string {
+// parseSgateGRPCAddr 从 sgate 注册地址解析 gRPC 拨号地址（udiscovery 的地址变换函数）：
+// 非 JSON（未来改为纯地址注册）原样通过；JSON 但缺 ip/grpc 拨号要素或空地址视为不可用。
+func parseSgateGRPCAddr(raw string) (string, bool) {
+	if raw == "" {
+		return "", false
+	}
 	var addr sgateRegisterAddress
-	if err := json.Unmarshal([]byte(raw), &addr); err == nil && addr.IP != "" && addr.GRPC > 0 {
-		return fmt.Sprintf("%s:%d", addr.IP, addr.GRPC)
+	if err := json.Unmarshal([]byte(raw), &addr); err != nil {
+		return raw, true
 	}
-	return raw
-}
-
-// sgateSource 将 uetcd.Component 适配为 ugrpc.Source（消费方本地适配器：地址为 JSON
-// 需 parseSgateGRPCAddr 变换，与 udiscovery.NewEtcd 的裸地址语义不同，故保留本地实现）；
-// OnServiceChange 返回 cancel（ugrpc.Source 契约，透传底层可退订）。
-type sgateSource struct {
-	c *uetcd.Component
-}
-
-// etcdKeyInstanceID 从 etcd 全量 key（prefix/belong/SGATE:zone/instanceID）取末段实例 ID
-func etcdKeyInstanceID(fullKey string) string {
-	return fullKey[strings.LastIndex(fullKey, "/")+1:]
-}
-
-func (s sgateSource) ServiceSet() map[string]string {
-	in := s.c.ServiceSet()
-	out := make(map[string]string, len(in))
-	for fullKey, addr := range in {
-		if grpcAddr := parseSgateGRPCAddr(addr); grpcAddr != "" {
-			out[etcdKeyInstanceID(fullKey)] = grpcAddr
-		}
+	if addr.IP != "" && addr.GRPC > 0 {
+		return fmt.Sprintf("%s:%d", addr.IP, addr.GRPC), true
 	}
-	return out
+	return "", false
 }
 
-func (s sgateSource) OnServiceChange(cb func(event ugrpc.SourceEvent)) func() {
-	return s.c.OnServiceChange(func(ev uetcd.ServiceEvent) {
-		// register/deregister 统一解析（deregister 地址守卫比较需与池内 addr 同口径）
-		cb(ugrpc.SourceEvent{
-			Register:   ev.Type == uetcd.EventRegister,
-			InstanceID: ev.InstanceID,
-			Address:    parseSgateGRPCAddr(ev.Address),
-		})
-	})
-}
-
-// NewSgateClientPool 创建并注册全局单例；discovery 为 SGATE:{zone} 的 etcd 组件
+// NewSgateClientPool 创建并注册全局单例；discovery 为 SGATE:{zone} 的 etcd 组件。
+// 地址变换经 udiscovery.WithAddressTransform 在 Source 层统一作用于快照与事件。
 func NewSgateClientPool(discovery *uetcd.Component, internalToken string) *SgateClientPool {
 	p := &SgateClientPool{}
 	if sgatePoolInit.CompareAndSwap(false, true) {
@@ -106,7 +81,7 @@ func NewSgateClientPool(discovery *uetcd.Component, internalToken string) *Sgate
 		),
 	})
 	if discovery != nil {
-		p.source = sgateSource{c: discovery}
+		p.source = udiscovery.NewEtcd(discovery, udiscovery.WithAddressTransform(parseSgateGRPCAddr))
 		p.pool.Attach(p.source)
 	}
 	return p
@@ -115,7 +90,7 @@ func NewSgateClientPool(discovery *uetcd.Component, internalToken string) *Sgate
 // AllIDs 返回当前已发现的全部 sgate 实例 ID（CIDR 封禁无法用 sess:ip 索引路由，
 // 需向全部 sgate 下发，各台本地前缀匹配）。
 func (p *SgateClientPool) AllIDs() []string {
-	if p.source.c == nil {
+	if p.source == nil {
 		return nil
 	}
 	set := p.source.ServiceSet()

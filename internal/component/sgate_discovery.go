@@ -6,6 +6,7 @@ import (
 	"github.com/streasure/loginserver/internal/config"
 
 	"github.com/streasure/protocol/enums"
+	"github.com/streasure/util/udiscovery"
 	"github.com/streasure/util/uetcd"
 )
 
@@ -22,7 +23,7 @@ func (s *sgateDiscoveryWrapper) Inner() *uetcd.Component { return s.Component }
 
 // NewSgateDiscoveryComponent 创建 SGATE 服务发现组件（仅发现，不注册）。
 // loginserver 经此发现 sgate 实例并下发 Kick RPC（单向 Kick 模型）。
-// ServiceID 与 sgate 自注册格式一致：{belong}/{SGATE}:{zone}
+// ServiceID 与 sgate 自注册格式一致：{belong}/{SGATE}:{zone}（udiscovery.JoinServiceID 约定）。
 func NewSgateDiscoveryComponent() (*sgateDiscoveryWrapper, error) {
 	cfg := config.GetConfig()
 
@@ -30,14 +31,10 @@ func NewSgateDiscoveryComponent() (*sgateDiscoveryWrapper, error) {
 		return nil, fmt.Errorf("etcd endpoints is empty")
 	}
 
-	sgateType := enums.ServerType_name[int32(enums.ServerType_SERVER_TYPE_SGATE)]
-	serviceKey := cfg.Belong + "/" + sgateType + ":" + cfg.Zone
+	serviceKey := udiscovery.JoinServiceID(cfg.Belong, enums.ServerType_SERVER_TYPE_SGATE, cfg.Zone)
 
 	comp := uetcd.New(uetcd.ComponentConfig{
-		Etcd: uetcd.Config{
-			Endpoints:     cfg.Etcd.Endpoints,
-			ServicePrefix: cfg.Etcd.ServicePrefix,
-		},
+		Etcd: cfg.Uetcd(),
 		Discovery: uetcd.DiscoveryConfig{
 			ServiceID: serviceKey,
 		},

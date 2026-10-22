@@ -169,6 +169,25 @@ func TestLoadEtcdPerfDefaults(t *testing.T) {
 	}
 }
 
+// 派生服务键：ServiceKey 为业务键前缀（gin 组件名 + redis 前缀，serverType 取 yaml 自由串），
+// LoginServerKey 遵循 udiscovery.JoinServiceID 约定 "{belong}/{serverType}:{zone}"；Uetcd() 派生连接配置
+func TestLoadServiceKeys(t *testing.T) {
+	if err := LoadConfig(writeTempConfig(t, baseYaml)); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	cfg := GetConfig()
+	if cfg.ServiceKey != "default/LoginServer:default" {
+		t.Errorf("ServiceKey = %q, want default/LoginServer:default", cfg.ServiceKey)
+	}
+	if cfg.LoginServerKey != "default/SERVER_TYPE_LOGINSERVER:default" {
+		t.Errorf("LoginServerKey = %q, want default/SERVER_TYPE_LOGINSERVER:default", cfg.LoginServerKey)
+	}
+	u := cfg.Uetcd()
+	if len(u.Endpoints) != 1 || u.Endpoints[0] != "http://127.0.0.1:2379" || u.ServicePrefix != "/services" {
+		t.Errorf("Uetcd() = %+v, want endpoints [http://127.0.0.1:2379] prefix /services", u)
+	}
+}
+
 // 显式配置的 perf/etcd 项不能被 default 覆盖（uconfig 键查找须与 mapstructure 大小写一致）
 func TestLoadEtcdPerfExplicit(t *testing.T) {
 	yaml := strings.Replace(baseYaml, `  servicePrefix: "/services"`, `  servicePrefix: "/services"

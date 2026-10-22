@@ -10,6 +10,7 @@ import (
 
 	"github.com/streasure/protocol/enums"
 	"github.com/streasure/util/uconfig"
+	"github.com/streasure/util/udiscovery"
 	"github.com/streasure/util/uetcd"
 	"github.com/streasure/util/ugorm"
 	"github.com/streasure/util/uload"
@@ -34,8 +35,19 @@ type Config struct {
 	Acl    AclConfig      `yaml:"acl"`  // 黑白名单/封禁检测的缓存与管理接口配置
 	Sgate  SgateConfig    `yaml:"sgate"`
 
-	ServiceKey     string
+	// ServiceKey 业务键前缀（gin 组件名 + redis key 前缀）：{belong}/{serverType}:{zone}，
+	// serverType 取 yaml 自由串，非 etcd 服务 ID
+	ServiceKey string
+	// LoginServerKey 自身 etcd 服务 ID（udiscovery.JoinServiceID 约定，供 etcd 注册/自发现）
 	LoginServerKey string
+}
+
+// Uetcd 返回 etcd 连接配置（注册与发现组件共用；LeaseTTL 属注册配置，不在此转换）。
+func (c *Config) Uetcd() uetcd.Config {
+	return uetcd.Config{
+		Endpoints:     c.Etcd.Endpoints,
+		ServicePrefix: c.Etcd.ServicePrefix,
+	}
 }
 
 // SgateConfig loginserver → sgate 的 Kick 联动配置（单向 Kick 模型）
@@ -88,8 +100,7 @@ func LoadConfig(configFile ...string) error {
 	}
 
 	cfg.ServiceKey = cfg.Belong + "/" + cfg.ServerType + ":" + cfg.Zone
-	loginServerKey := enums.ServerType_name[int32(enums.ServerType_SERVER_TYPE_LOGINSERVER)]
-	cfg.LoginServerKey = cfg.Belong + "/" + loginServerKey + ":" + cfg.Zone
+	cfg.LoginServerKey = udiscovery.JoinServiceID(cfg.Belong, enums.ServerType_SERVER_TYPE_LOGINSERVER, cfg.Zone)
 	_defaultConfig = cfg
 	return nil
 }

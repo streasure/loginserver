@@ -22,10 +22,7 @@ func NewEtcdComponent() (*uetcd.Component, error) {
 	advertiseAddr := netutil.LocalIP() + netutil.PortAddr(cfg.Ports.GrpcServiceAddr)
 
 	comp := uetcd.New(uetcd.ComponentConfig{
-		Etcd: uetcd.Config{
-			Endpoints:     cfg.Etcd.Endpoints,
-			ServicePrefix: cfg.Etcd.ServicePrefix,
-		},
+		Etcd: cfg.Uetcd(),
 		Registration: uetcd.RegistrationConfig{
 			ServiceID:  serviceKey,
 			InstanceID: cfg.ServerId,

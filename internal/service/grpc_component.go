@@ -31,8 +31,9 @@ func NewLoginGrpcServer() *LoginGrpcServer {
 		return s
 	}
 
-	// 创建通用 gRPC 服务器：身份字段（belong/serverType/zone/serverId）供 etcd
-	// 服务注册使用（ServiceKey/ServerId）；只写端口时监听所有网卡，
+	// 创建通用 gRPC 服务器：身份字段（belong/serverType/zone/serverId）与 etcd
+	// 服务注册（LoginServerKey/ServerId，由 etcd 组件读取 config 构建）同源；
+	// 只写端口时监听所有网卡，
 	// 对外通告地址（etcd 注册用）通过 server.AdvertiseAddr() 自动拼接本机 IP。
 	// 在构造函数创建（而非 Init），etcd 组件创建时即可读取服务身份。
 	// 拦截器链：uload.UnaryServerInterceptor 最外（过载准入，与 HTTP 侧 uload.Middleware
