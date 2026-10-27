@@ -44,7 +44,9 @@ func init() {
 func checkAdminToken(c *gin.Context) bool {
 	got := c.GetHeader(adminTokenHeader)
 	want := config.GetConfig().Acl.AdminToken
-	if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+	// 空 token 一律拒绝（fail-closed）：配置校验虽要求必填，此处兜底防
+	// 未加载/被清空时空串与缺失头比对相等而放行（sgate admin 同口径空即拒）。
+	if want == "" || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 		c.JSON(http.StatusUnauthorized, uhttp.Failure(dto.CodeUnauthorized, "unauthorized"))
 		return false
 	}

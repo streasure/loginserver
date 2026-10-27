@@ -37,8 +37,10 @@ func AdminAuthUnaryInterceptor(
 	}
 	md, _ := metadata.FromIncomingContext(ctx)
 	got := md.Get(adminTokenMetadataKey)
-	// 常数时间比较，防时序侧信道逐字节探测
-	if len(got) == 0 || subtle.ConstantTimeCompare([]byte(got[0]), []byte(config.GetConfig().Acl.AdminToken)) != 1 {
+	// 常数时间比较，防时序侧信道逐字节探测；
+	// 配置 token 为空一律拒绝（fail-closed，防空值与空配置比对相等放行）
+	adminToken := config.GetConfig().Acl.AdminToken
+	if adminToken == "" || len(got) == 0 || subtle.ConstantTimeCompare([]byte(got[0]), []byte(adminToken)) != 1 {
 		return nil, status.Error(codes.Unauthenticated, "admin token required")
 	}
 	return handler(ctx, req)

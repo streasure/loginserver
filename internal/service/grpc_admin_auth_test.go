@@ -41,3 +41,23 @@ func TestAdminAuthUnaryInterceptor(t *testing.T) {
 		t.Errorf("open method should pass without token: %v", err)
 	}
 }
+
+// TestAdminAuthEmptyTokenFailClosed 配置 token 为空时一律拒绝（fail-closed）：
+// 空配置与空 metadata 值比对相等也不得放行。
+func TestAdminAuthEmptyTokenFailClosed(t *testing.T) {
+	old := config.GetConfig().Acl.AdminToken
+	config.GetConfig().Acl.AdminToken = ""
+	defer func() { config.GetConfig().Acl.AdminToken = old }()
+
+	handler := func(ctx context.Context, req any) (any, error) { return "ok", nil }
+	info := &grpc.UnaryServerInfo{FullMethod: "/loginserver.LoginService/AddBlacklistIP"}
+
+	if _, err := AdminAuthUnaryInterceptor(context.Background(), nil, info, handler); err == nil {
+		t.Error("empty configured token must be rejected (no metadata)")
+	}
+	ctx := metadata.NewIncomingContext(context.Background(),
+		metadata.Pairs(adminTokenMetadataKey, ""))
+	if _, err := AdminAuthUnaryInterceptor(ctx, nil, info, handler); err == nil {
+		t.Error("empty configured token must be rejected (empty metadata value)")
+	}
+}
