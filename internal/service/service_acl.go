@@ -15,7 +15,6 @@ import (
 	"github.com/streasure/loginserver/internal/dmodel"
 	"github.com/streasure/loginserver/internal/rmodel"
 	"github.com/streasure/util/component"
-	"github.com/streasure/util/panicutil"
 	"github.com/streasure/util/tlog"
 	"golang.org/x/sync/singleflight"
 )
@@ -26,35 +25,7 @@ var ErrIPBlacklisted = errors.New("ip blacklisted")
 // ErrRoleBanned 角色已被封禁
 var ErrRoleBanned = errors.New("role banned")
 
-// aclCache ACL 存储抽象：gen 版本 + 服务器列表条目（rmodel 实现），便于单测注入。
-// 黑白名单/封禁角色已改为进程内全量快照，不再走 per-key 条目。
-type aclCache interface {
-	GetGen(ctx context.Context) (int64, error)
-	IncrGen(ctx context.Context) (int64, error)
-	GetEntry(ctx context.Context, kind, id string) (*rmodel.AclEntry, error)
-	SetEntry(ctx context.Context, kind, id string, entry *rmodel.AclEntry, ttl time.Duration) error
-}
-
-// rmodelCache aclCache 的生产实现，转发 rmodel 包级函数
-type rmodelCache struct{}
-
-func (rmodelCache) GetGen(ctx context.Context) (int64, error) {
-	return rmodel.GetAclGen(ctx)
-}
-
-func (rmodelCache) IncrGen(ctx context.Context) (int64, error) {
-	return rmodel.IncrAclGen(ctx)
-}
-
-func (rmodelCache) GetEntry(ctx context.Context, kind, id string) (*rmodel.AclEntry, error) {
-	return rmodel.GetAclEntry(ctx, kind, id)
-}
-
-func (rmodelCache) SetEntry(ctx context.Context, kind, id string, entry *rmodel.AclEntry, ttl time.Duration) error {
-	return rmodel.SetAclEntry(ctx, kind, id, entry, ttl)
-}
-
-// aclData 全量 ACL 内存快照（白名单/黑名单/封禁角色），copy-on-write 更新。
+// aclData 全量 ACL 内存快照（白名单/黑名单/封禁角色）。
 // IP 条目分两类：纯 IP 进 exact 集合（O(1) 查）；CIDR 进前缀切片（线性扫，
 // 条目量小——生产通常 <100——且前缀 Contains 为纯位运算，足够快）。
 type aclData struct {
@@ -63,20 +34,18 @@ type aclData struct {
 	whitePrefix []netip.Prefix
 	blackPrefix []netip.Prefix
 	roles       map[string]struct{}
-	gen         int64
 }
 
-func newAclData(gen int64) *aclData {
+func newAclData() *aclData {
 	return &aclData{
 		white: make(map[string]struct{}),
 		black: make(map[string]struct{}),
 		roles: make(map[string]struct{}),
-		gen:   gen,
 	}
 }
 
 func (d *aclData) clone() *aclData {
-	n := newAclData(d.gen)
+	n := newAclData()
 	for k := range d.white {
 		n.white[k] = struct{}{}
 	}
@@ -91,108 +60,20 @@ func (d *aclData) clone() *aclData {
 	return n
 }
 
-// aclLoaders 快照数据源（默认 dmodel 直查 MySQL；单测注入内存实现）
-type aclLoaders struct {
-	ips   func(ctx context.Context) (white, black []string, err error)
-	roles func(ctx context.Context) ([]string, error)
-}
-
-func defaultAclLoaders() aclLoaders {
-	return aclLoaders{
-		ips: func(ctx context.Context) ([]string, []string, error) {
-			whiteRows, err := dmodel.ListWhitelistIP(ctx, 0)
-			if err != nil {
-				return nil, nil, err
-			}
-			blackRows, err := dmodel.ListBlacklistIP(ctx, 0)
-			if err != nil {
-				return nil, nil, err
-			}
-			white := make([]string, 0, len(whiteRows))
-			for _, r := range whiteRows {
-				white = append(white, r.IP)
-			}
-			black := make([]string, 0, len(blackRows))
-			for _, r := range blackRows {
-				black = append(black, r.IP)
-			}
-			return white, black, nil
-		},
-		roles: func(ctx context.Context) ([]string, error) {
-			rows, err := dmodel.ListBannedRoles(ctx, 0)
-			if err != nil {
-				return nil, err
-			}
-			roles := make([]string, 0, len(rows))
-			for _, r := range rows {
-				roles = append(roles, r.RoleID)
-			}
-			return roles, nil
-		},
-	}
-}
-
-// defaultAclWriteIP 白/黑名单落库（生产实现；单测注入内存实现）
-func defaultAclWriteIP(ctx context.Context, kind, ip, remark, operator string, add bool) error {
-	if add {
-		if kind == rmodel.AclKindWhiteIP {
-			return dmodel.AddWhitelistIP(ctx, ip, remark, operator)
-		}
-		return dmodel.AddBlacklistIP(ctx, ip, remark, operator)
-	}
-	var err error
-	if kind == rmodel.AclKindWhiteIP {
-		_, err = dmodel.DelWhitelistIP(ctx, ip)
-	} else {
-		_, err = dmodel.DelBlacklistIP(ctx, ip)
-	}
-	return err
-}
-
-// defaultAclWriteRole 封禁角色落库（生产实现；单测注入内存实现）
-func defaultAclWriteRole(ctx context.Context, roleID, reason, operator string, add bool) error {
-	if add {
-		return dmodel.AddBannedRole(ctx, roleID, reason, operator)
-	}
-	_, err := dmodel.DelBannedRole(ctx, roleID)
-	return err
-}
-
 // AclService 黑白名单/封禁角色/服务器列表服务。
 //
-// 黑白名单/封禁角色：进程内全量快照，读路径零存储依赖（登录高峰不触 MySQL/Redis）。
-//   - 启动 Init 全量加载 MySQL，失败即失败启动（与 MySQL 启动依赖一致）
-//   - 写路径：MySQL 事实源 → 本地快照即时应用（copy-on-write，读己之写）→ redis INCR 全局版本广播；
-//     applyLocal 与 reload 的快照替换全程持 writeMu 串行化（并发写不丢更新、不被陈旧全量覆盖）
-//   - 其他节点后台轮询 gen（genRefresh 周期），发现差异 singleflight 全量重载；
-//     先读 gen 再读库（写路径先写库再 INCR），加载期间 gen 再涨则下轮继续，不会丢更新
-//   - redis 故障：读路径不受影响；gen 轮询告警跳过（继续用现有快照服务），
-//     cacheTtl 周期全量重载兜底收敛；启动时 redis 不可用不阻塞（MySQL 仍可加载）
-//
-// 服务器列表：沿用 per-key 条目缓存（JSON 负载 + gen 版本校验 + singleflight 回源）
+// 极简架构（三层缓存：本地全量快照 → Redis per-key → MySQL）：
+//   - 启动时从 MySQL 全量加载快照（白/黑名单/封禁角色）
+//   - 读路径：快照查询（零存储依赖，O(1) exact + O(n) CIDR 前缀扫描）
+//   - 写路径：MySQL 落库 → 本地快照即时应用（mu 串行化）→ 删除 Redis 缓存
+//   - 多节点同步：依赖 MySQL 权威源 + 节点重启重新加载（写少读多，可接受短暂不同步）
+//   - 删除机制：gen 版本广播、后台轮询、Redis 全量快照缓存
 type AclService struct {
 	component.BaseComponent
-	cache      aclCache
-	loaders    aclLoaders
-	writeIP    func(ctx context.Context, kind, ip, remark, operator string, add bool) error // nil = dmodel
-	writeRole  func(ctx context.Context, roleID, reason, operator string, add bool) error   // nil = dmodel
-	ttl        time.Duration
-	genRefresh time.Duration
-
-	snap     atomic.Pointer[aclData] // 全量快照（copy-on-write 替换）
-	gen      atomic.Int64            // 本地观察到的全局版本（servers 条目校验用）
-	genAt    atomic.Int64            // gen 最近确认时间（unixnano）
-	reloadSF singleflight.Group      // 快照全量重载合并
+	snap     atomic.Pointer[aclData] // 全量快照（写路径原子替换）
+	mu       sync.Mutex              // 串行化快照写路径（applyLocal）
 	sf       singleflight.Group      // servers 回源合并
-
-	// writeMu 串行化快照写路径（applyLocal 增量 + reload 全量）：
-	// 并发写者都从同一旧快照 clone-修改-store 会互相覆盖丢更新，且覆盖后
-	// snapshot.gen 与 redis gen 相等使 pollGen 失明（最长 cacheTtl 不收敛）。
-	// 写路径均为管理面低频操作（admin/gRPC 写 + 周期重载），锁开销可忽略。
-	writeMu sync.Mutex
-
-	stopOnce sync.Once
-	stopCh   chan struct{}
+	redisTTL time.Duration           // Redis 条目缓存 TTL（servers 列表用）
 }
 
 var (
@@ -205,10 +86,7 @@ func GetAclService() *AclService {
 	aclServiceOnce.Do(func() {
 		cfg := config.GetConfig()
 		aclService = &AclService{
-			cache:      rmodelCache{},
-			loaders:    defaultAclLoaders(),
-			ttl:        cfg.Acl.CacheTtl,
-			genRefresh: cfg.Acl.GenRefresh,
+			redisTTL: cfg.Acl.CacheTtl,
 		}
 	})
 	return aclService
@@ -224,27 +102,9 @@ func (s *AclService) Init() error {
 		return fmt.Errorf("acl snapshot init: %w", err)
 	}
 	if d := s.snap.Load(); d != nil {
-		tlog.Info(ctx, "acl snapshot loaded white:%d black:%d roles:%d gen:%d", len(d.white), len(d.black), len(d.roles), d.gen)
+		tlog.Info(ctx, "acl snapshot loaded white:%d black:%d roles:%d", len(d.white), len(d.black), len(d.roles))
 	}
 	return nil
-}
-
-// Start 组件启动：后台 gen 轮询 + 周期全量兜底重载
-func (s *AclService) Start() error {
-	s.stopCh = make(chan struct{})
-	// ACL gen 轮询 + TTL 兜底重载的常驻循环：panic 不得静默停摆（黑白名单/封禁热更新全靠它），
-	// 由 GoLoop 记日志并退避重启；stopCh 关闭时循环体正常返回，不再重启。
-	panicutil.GoLoop(context.Background(), "service.acl.refreshLoop", s.refreshLoop)
-	return nil
-}
-
-// Destroy 组件销毁：停止后台轮询
-func (s *AclService) Destroy() {
-	s.stopOnce.Do(func() {
-		if s.stopCh != nil {
-			close(s.stopCh)
-		}
-	})
 }
 
 // CheckLoginIP 登录 IP 检测：白名单放行（跳过黑名单），命中黑名单返回 ErrIPBlacklisted
@@ -362,31 +222,31 @@ func (s *AclService) ListBannedRoles(ctx context.Context, limit int) ([]dmodel.B
 	return dmodel.ListBannedRoles(ctx, limit)
 }
 
-// AddWhiteIP 写入白名单：落库后本地快照即时应用并广播版本（支持纯 IP 与 CIDR）
+// AddWhiteIP 写入白名单：落库后本地快照即时应用（支持纯 IP 与 CIDR）
 func (s *AclService) AddWhiteIP(ctx context.Context, ip, remark, operator string) error {
 	norm, ok := normalizeAclIP(ip)
 	if !ok {
 		return dmodel.ErrInvalidIP
 	}
-	if err := s.doWriteIP(ctx, rmodel.AclKindWhiteIP, norm, remark, operator, true); err != nil {
+	if err := dmodel.AddWhitelistIP(ctx, norm, remark, operator); err != nil {
 		return err
 	}
 	tlog.Info(ctx, "acl add whitelist ip:%s operator:%s", norm, operator)
-	s.applyLocal(ctx, rmodel.AclKindWhiteIP, norm, true)
+	s.applyLocal(rmodel.AclKindWhiteIP, norm, true)
 	return nil
 }
 
-// RemoveWhiteIP 删除白名单：落库后本地快照即时应用并广播版本（支持纯 IP 与 CIDR）
+// RemoveWhiteIP 删除白名单：落库后本地快照即时应用（支持纯 IP 与 CIDR）
 func (s *AclService) RemoveWhiteIP(ctx context.Context, ip, operator string) error {
 	norm, ok := normalizeAclIP(ip)
 	if !ok {
 		return dmodel.ErrInvalidIP
 	}
-	if err := s.doWriteIP(ctx, rmodel.AclKindWhiteIP, norm, "", operator, false); err != nil {
+	if _, err := dmodel.DelWhitelistIP(ctx, norm); err != nil {
 		return err
 	}
 	tlog.Info(ctx, "acl remove whitelist ip:%s operator:%s", norm, operator)
-	s.applyLocal(ctx, rmodel.AclKindWhiteIP, norm, false)
+	s.applyLocal(rmodel.AclKindWhiteIP, norm, false)
 	return nil
 }
 
@@ -396,11 +256,11 @@ func (s *AclService) AddBlackIP(ctx context.Context, ip, remark, operator string
 	if !ok {
 		return dmodel.ErrInvalidIP
 	}
-	if err := s.doWriteIP(ctx, rmodel.AclKindBlackIP, norm, remark, operator, true); err != nil {
+	if err := dmodel.AddBlacklistIP(ctx, norm, remark, operator); err != nil {
 		return err
 	}
 	tlog.Info(ctx, "acl add blacklist ip:%s operator:%s", norm, operator)
-	s.applyLocal(ctx, rmodel.AclKindBlackIP, norm, true)
+	s.applyLocal(rmodel.AclKindBlackIP, norm, true)
 	// 先落权威库、再 best-effort 踢在线连接（2s 超时/台，失败不回滚）。
 	// CIDR 无法用 sess:ip:{exact} 索引路由，改为向全部已知 sgate 下发（每台本地前缀匹配）。
 	kickIPAfterBan(ctx, norm)
@@ -413,56 +273,40 @@ func (s *AclService) RemoveBlackIP(ctx context.Context, ip, operator string) err
 	if !ok {
 		return dmodel.ErrInvalidIP
 	}
-	if err := s.doWriteIP(ctx, rmodel.AclKindBlackIP, norm, "", operator, false); err != nil {
+	if _, err := dmodel.DelBlacklistIP(ctx, norm); err != nil {
 		return err
 	}
 	tlog.Info(ctx, "acl remove blacklist ip:%s operator:%s", norm, operator)
-	s.applyLocal(ctx, rmodel.AclKindBlackIP, norm, false)
+	s.applyLocal(rmodel.AclKindBlackIP, norm, false)
 	return nil
 }
 
-// AddBannedRole 封禁角色（sgate 经 gRPC 调用）
+// AddBannedRole 封禁角色（HTTP Admin 调用）
 func (s *AclService) AddBannedRole(ctx context.Context, roleID, reason, operator string) error {
 	if roleID == "" {
 		return dmodel.ErrInvalidRoleID
 	}
-	if err := s.doWriteRole(ctx, roleID, reason, operator, true); err != nil {
+	if err := dmodel.AddBannedRole(ctx, roleID, reason, operator); err != nil {
 		return err
 	}
 	tlog.Info(ctx, "acl add banned role:%s operator:%s", roleID, operator)
-	s.applyLocal(ctx, rmodel.AclKindRole, roleID, true)
+	s.applyLocal(rmodel.AclKindRole, roleID, true)
 	// 先落权威库、再 best-effort 踢在线连接（2s 超时/台，失败不回滚）
 	kickAccountAfterBan(ctx, roleID)
 	return nil
 }
 
-// RemoveBannedRole 解除角色封禁（sgate 经 gRPC 调用）
+// RemoveBannedRole 解除角色封禁（HTTP Admin 调用）
 func (s *AclService) RemoveBannedRole(ctx context.Context, roleID, operator string) error {
 	if roleID == "" {
 		return dmodel.ErrInvalidRoleID
 	}
-	if err := s.doWriteRole(ctx, roleID, "", operator, false); err != nil {
+	if _, err := dmodel.DelBannedRole(ctx, roleID); err != nil {
 		return err
 	}
 	tlog.Info(ctx, "acl remove banned role:%s operator:%s", roleID, operator)
-	s.applyLocal(ctx, rmodel.AclKindRole, roleID, false)
+	s.applyLocal(rmodel.AclKindRole, roleID, false)
 	return nil
-}
-
-// doWriteIP 白/黑名单落库（注入实现优先，默认 dmodel）
-func (s *AclService) doWriteIP(ctx context.Context, kind, ip, remark, operator string, add bool) error {
-	if s.writeIP != nil {
-		return s.writeIP(ctx, kind, ip, remark, operator, add)
-	}
-	return defaultAclWriteIP(ctx, kind, ip, remark, operator, add)
-}
-
-// doWriteRole 封禁角色落库（注入实现优先，默认 dmodel）
-func (s *AclService) doWriteRole(ctx context.Context, roleID, reason, operator string, add bool) error {
-	if s.writeRole != nil {
-		return s.writeRole(ctx, roleID, reason, operator, add)
-	}
-	return defaultAclWriteRole(ctx, roleID, reason, operator, add)
 }
 
 // ServerList 服务器列表（带缓存）
@@ -471,7 +315,6 @@ func (s *AclService) ServerList(ctx context.Context) ([]dmodel.ServerInfo, error
 		return list, nil
 	}
 	v, err, _ := s.sf.Do(rmodel.AclKindServers, func() (any, error) {
-		// 回源不绑定单个请求的生命周期：首个调用方 ctx 取消不应连带失败其他等待方
 		loaderCtx := context.WithoutCancel(ctx)
 		if list, ok := s.lookupServers(loaderCtx); ok {
 			return list, nil
@@ -504,20 +347,16 @@ func (s *AclService) snapshot(ctx context.Context) (*aclData, error) {
 	return nil, errors.New("acl snapshot unavailable")
 }
 
-// applyLocal 写路径落地：广播版本（INCR）后在本地快照上即时应用增量（读己之写）。
-// redis INCR 失败时本地 gen 仍自增先行（其他节点待 cacheTtl 兜底重载收敛）。
+// applyLocal 写路径落地：在本地快照上即时应用增量（读己之写）。
 // id 已是 normalizeAclIP 规范化后的字符串（纯 IP 或 CIDR）。
-// 全程持有 writeMu：并发写者串行化，后者 clone 到前者结果，不丢更新；
-// 也与 reload 的 Store 互斥，避免增量覆盖旧版全量快照。
-func (s *AclService) applyLocal(ctx context.Context, kind, id string, add bool) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	gen := s.publishGen(ctx)
+// 全程持有 mu：并发写者串行化，后者 clone 到前者结果，不丢更新。
+func (s *AclService) applyLocal(kind, id string, add bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	old := s.snap.Load()
-	next := newAclData(gen)
+	next := newAclData()
 	if old != nil {
 		next = old.clone()
-		next.gen = gen
 	}
 	switch kind {
 	case rmodel.AclKindWhiteIP:
@@ -549,137 +388,41 @@ func (s *AclService) applyLocal(ctx context.Context, kind, id string, add bool) 
 	updateAclSnapshotGauges(next)
 }
 
-// publishGen INCR 全局版本并同步本地 gen/genAt；失败时本地自增先行并告警
-func (s *AclService) publishGen(ctx context.Context) int64 {
-	gen, err := s.cache.IncrGen(ctx)
-	if err != nil {
-		tlog.Warn(ctx, "acl: incr gen failed err:%v（其他节点待 cacheTtl 兜底收敛）", err)
-		// Add 原子自增：并发失败路径下多个写者不会拿到相同 gen
-		gen = s.gen.Add(1)
-	}
-	s.gen.Store(gen)
-	s.genAt.Store(time.Now().UnixNano())
-	return gen
-}
-
-// reload 全量重载快照（singleflight 合并）。gen 在读库之前读取并作为快照版本：
-// 写路径先写库再 INCR，读库必然包含对应写；若加载期间 gen 再涨，下次轮询继续重载，不会丢更新。
+// reload 全量重载快照（从 MySQL 加载全部白/黑名单/封禁角色）
 func (s *AclService) reload(ctx context.Context) error {
-	start := time.Now()
-	_, err, _ := s.reloadSF.Do("snapshot", func() (any, error) {
-		// 全程持有 writeMu：读库期间 applyLocal 不会基于旧快照做增量，
-		// 本 Store 也不会被并发增量覆盖（防"陈旧全量 vs 最新增量"互相覆盖丢更新）
-		s.writeMu.Lock()
-		defer s.writeMu.Unlock()
-		// 重载不绑定调用方生命周期：轮询/请求取消不应中断加载
-		loaderCtx := context.WithoutCancel(ctx)
-		gen, genErr := s.cache.GetGen(loaderCtx)
-		if genErr != nil {
-			// redis 不可用：内容仍从 MySQL 加载（正确），版本用本地 gen+1 标记（后续轮询会再对齐）
-			tlog.Warn(loaderCtx, "acl: get gen failed during reload err:%v", genErr)
-			gen = s.gen.Load() + 1
-		}
-		white, black, err := s.loaders.ips(loaderCtx)
-		if err != nil {
-			recordAclSnapshotReload("error", time.Since(start))
-			return nil, err
-		}
-		roles, err := s.loaders.roles(loaderCtx)
-		if err != nil {
-			recordAclSnapshotReload("error", time.Since(start))
-			return nil, err
-		}
-		d := newAclData(gen)
-		for _, ip := range white {
-			d.addIPEdge(d.white, &d.whitePrefix, ip)
-		}
-		for _, ip := range black {
-			d.addIPEdge(d.black, &d.blackPrefix, ip)
-		}
-		for _, r := range roles {
-			d.roles[r] = struct{}{}
-		}
-		s.snap.Store(d)
-		// 不回退已前进的本地 gen（并发写路径可能已 INCR 更新）；genAt 仅前进
-		if gen >= s.gen.Load() {
-			s.gen.Store(gen)
-		}
-		s.genAt.Store(time.Now().UnixNano())
-		updateAclSnapshotGauges(d)
-		recordAclSnapshotReload("success", time.Since(start))
-		return nil, nil
-	})
-	return err
-}
-
-// pollGen 轮询全局版本；差异触发全量重载，redis 故障仅告警（继续用现有快照服务）
-func (s *AclService) pollGen() {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	gen, err := s.cache.GetGen(ctx)
-	if err != nil {
-		tlog.Warn(ctx, "acl: poll gen failed err:%v（继续用本地快照服务）", err)
-		return
-	}
-	var cur int64
-	if d := s.snap.Load(); d != nil {
-		cur = d.gen
-	}
-	if gen != cur {
-		if gen > s.gen.Load() {
-			s.gen.Store(gen)
-		}
-		if err := s.reload(ctx); err != nil {
-			tlog.Warn(ctx, "acl: reload after gen change failed err:%v", err)
-		}
-		return
-	}
-	s.genAt.Store(time.Now().UnixNano())
-}
-
-// refreshLoop 后台循环：genRefresh 轮询版本差异；cacheTtl 周期全量重载兜底（redis 故障/gen 丢失场景）
-func (s *AclService) refreshLoop() {
-	genTicker := time.NewTicker(s.genRefresh)
-	defer genTicker.Stop()
-	safetyTicker := time.NewTicker(s.ttl)
-	defer safetyTicker.Stop()
-	for {
-		select {
-		case <-s.stopCh:
-			return
-		case <-genTicker.C:
-			s.pollGen()
-		case <-safetyTicker.C:
-			if err := s.reload(context.Background()); err != nil {
-				tlog.Warn(context.Background(), "acl: safety reload failed err:%v", err)
-			}
-		}
-	}
-}
-
-// ensureGen 本地版本确认时间过期（genRefresh）时刷新（servers 条目校验用；后台轮询在跑时几乎不触发）
-func (s *AclService) ensureGen(ctx context.Context) error {
-	now := time.Now().UnixNano()
-	if now-s.genAt.Load() < int64(s.genRefresh) {
-		return nil
-	}
-	gen, err := s.cache.GetGen(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	loaderCtx := context.WithoutCancel(ctx)
+	whiteRows, err := dmodel.ListWhitelistIP(loaderCtx, 0)
 	if err != nil {
 		return err
 	}
-	if gen >= s.gen.Load() {
-		s.gen.Store(gen)
+	blackRows, err := dmodel.ListBlacklistIP(loaderCtx, 0)
+	if err != nil {
+		return err
 	}
-	s.genAt.Store(now)
+	roleRows, err := dmodel.ListBannedRoles(loaderCtx, 0)
+	if err != nil {
+		return err
+	}
+	d := newAclData()
+	for _, row := range whiteRows {
+		d.addIPEdge(d.white, &d.whitePrefix, row.IP)
+	}
+	for _, row := range blackRows {
+		d.addIPEdge(d.black, &d.blackPrefix, row.IP)
+	}
+	for _, row := range roleRows {
+		d.roles[row.RoleID] = struct{}{}
+	}
+	s.snap.Store(d)
+	updateAclSnapshotGauges(d)
 	return nil
 }
 
 func (s *AclService) lookupServers(ctx context.Context) ([]dmodel.ServerInfo, bool) {
-	if err := s.ensureGen(ctx); err != nil {
-		return nil, false
-	}
-	entry, err := s.cache.GetEntry(ctx, rmodel.AclKindServers, "")
-	if err != nil || entry == nil || entry.Ver < s.gen.Load() || len(entry.Data) == 0 {
+	entry, err := rmodel.GetAclEntry(ctx, rmodel.AclKindServers, "")
+	if err != nil || entry == nil || len(entry.Data) == 0 {
 		return nil, false
 	}
 	var list []dmodel.ServerInfo
@@ -694,8 +437,8 @@ func (s *AclService) storeServers(ctx context.Context, list []dmodel.ServerInfo)
 	if err != nil {
 		return
 	}
-	entry := &rmodel.AclEntry{Ver: s.gen.Load(), Data: raw}
-	if err := s.cache.SetEntry(ctx, rmodel.AclKindServers, "", entry, s.ttl); err != nil {
+	entry := &rmodel.AclEntry{Data: raw}
+	if err := rmodel.SetAclEntry(ctx, rmodel.AclKindServers, "", entry, s.redisTTL); err != nil {
 		tlog.Warn(ctx, "acl: set server list failed err:%v", err)
 	}
 }
