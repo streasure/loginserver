@@ -147,11 +147,12 @@ try {
     while ((Get-Date) -lt $deadline -and -not $lsOk) {
       Start-Sleep -Milliseconds 500
       try {
-        $r = Invoke-RestMethod -Uri "$Base/api/v1/servers" -Headers $AdminHdr -Method Get
-        if ($r.code -eq 0) { $lsOk = $true }
+        # ugin 默认 GET /health 存活探针（免鉴权）
+        $r = Invoke-RestMethod -Uri "$Base/health" -Method Get
+        if ($r.status -eq 'ok') { $lsOk = $true }
       } catch { }
     }
-    if (-not $lsOk) { Fail 'loginserver_e2e 30s 内未就绪(:10101)' }
+    if (-not $lsOk) { Fail 'loginserver_e2e 30s 内未就绪(:10101/health)' }
     if (-not (Wait-Tcp $SgateTcp 30)) { Fail 'sgate_e2e 30s 内未就绪(:58080)' }
     Write-Host '   both ready'
   }

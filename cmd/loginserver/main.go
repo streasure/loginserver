@@ -37,12 +37,12 @@ func main() {
 	}
 
 	// 初始化 tlog
-	logComp := tlog.NewLogComponent(*loggerConf)
-	if err := logComp.Init(); err != nil {
+	// 先初始化日志（进程生命周期最先，defer Close 收尾；容器/业务日志统一走 tlog）
+	if err := tlog.Init(*loggerConf); err != nil {
 		fmt.Printf("failed to initialize tlog: %v\n", err)
 		return
 	}
-	defer logComp.Destroy()
+	defer tlog.Close()
 
 	// 加载配置
 	err := config.LoadConfig(*confFiles)
