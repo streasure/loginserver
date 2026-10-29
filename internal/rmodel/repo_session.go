@@ -175,43 +175,6 @@ func SessionSgatesByCIDR(ctx context.Context, cidr string) (sgates []string, nee
 	return out, false, nil
 }
 
-// RemoveSession 连接关闭时清理会话缓存（best-effort，sgate OnClose 调用）。
-// 先读 conn hash 拿 account_id/ip，再 pipeline 删 conn + SREM acct/ip/ip24 成员。
-// 幂等：键不存在时 no-op。失败仅返回 error，调用方记日志不重试（靠 TTL 兜底）。
-func RemoveSession(ctx context.Context, sgateID, connID string) error {
-	if sgateID == "" || connID == "" {
-		return nil
-	}
-	rdb, err := GetRedisClient()
-	if err != nil {
-		return err
-	}
-	connKey := sessionConnKey(sgateID, connID)
-	member := sessionMember(sgateID, connID)
-
-	// 先读 hash 拿 account/ip（SREM 需要精确键）
-	vals, err := rdb.HMGet(ctx, connKey, "account_id", "ip").Result()
-	if err != nil {
-		return err
-	}
-	accountID, _ := vals[0].(string)
-	ip, _ := vals[1].(string)
-
-	pipe := rdb.TxPipeline()
-	pipe.Del(ctx, connKey)
-	if accountID != "" {
-		pipe.SRem(ctx, sessionAcctKey(accountID), member)
-	}
-	if ip != "" {
-		pipe.SRem(ctx, sessionIPKey(ip), member)
-		if ip24Key := sessionIP24Key(ip); ip24Key != "" {
-			pipe.SRem(ctx, ip24Key, member)
-		}
-	}
-	_, err = pipe.Exec(ctx)
-	return err
-}
-
 // SessionSummary 会话摘要（admin 列表用，不含敏感字段）
 type SessionSummary struct {
 	SgateID   string `json:"sgateId"`
@@ -271,4 +234,47 @@ func ListSessions(ctx context.Context, limit int, sgateFilter string) ([]Session
 		}
 	}
 	return out, nil
+}
+
+// lastLoginServerTTL 最近登录服务器记录保留时长（30天，支持登录 UI 推荐）
+const lastLoginServerTTL = 30 * 24 * time.Hour
+
+func lastLoginServerKey(accountID string) string {
+	return getKey("last_login_server", accountID)
+}
+
+// SetLastLoginServer 记录账号最近登录的 serverID（ValidateLoginToken 成功时调用）。
+// best-effort，失败仅记日志不影响登录。
+func SetLastLoginServer(ctx context.Context, accountID, serverID string) error {
+	if accountID == "" || serverID == "" {
+		return nil
+	}
+	rdb, err := GetRedisClient()
+	if err != nil {
+		return err
+	}
+	key := lastLoginServerKey(accountID)
+	return rdb.Set(ctx, key, serverID, lastLoginServerTTL).Err()
+}
+
+// GetLastLoginServer 查询账号最近登录的 serverID（登录 UI 用）。
+// 键不存在返回 ""。
+func GetLastLoginServer(ctx context.Context, accountID string) (string, error) {
+	if accountID == "" {
+		return "", nil
+	}
+	rdb, err := GetRedisClient()
+	if err != nil {
+		return "", err
+	}
+	key := lastLoginServerKey(accountID)
+	val, err := rdb.Get(ctx, key).Result()
+	if err != nil {
+		// 兼容 redis.Nil（键不存在）
+		if err.Error() == "redis: nil" {
+			return "", nil
+		}
+		return "", err
+	}
+	return val, nil
 }

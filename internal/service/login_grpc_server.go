@@ -37,6 +37,13 @@ func (h *LoginServer) ValidateLoginToken(
 			tlog.Warn(ctx, "write session cache failed accountId:%s sgate:%s conn:%s err:%v",
 				req.GetAccountId(), req.GetSgateId(), req.GetConnId(), err)
 		}
+		// 记录最近登录服务器（登录 UI 推荐用，30天 TTL）
+		if req.GetServerId() != "" {
+			if err := rmodel.SetLastLoginServer(ctx, req.GetAccountId(), req.GetServerId()); err != nil {
+				tlog.Warn(ctx, "set last login server failed accountId:%s serverId:%s err:%v",
+					req.GetAccountId(), req.GetServerId(), err)
+			}
+		}
 	}
 
 	return &loginproto.ValidateLoginTokenAck{Valid: valid}, nil
@@ -72,17 +79,4 @@ func (h *LoginServer) BatchValidateLoginTokens(
 		valid[i] = v
 	}
 	return &loginproto.BatchValidateLoginTokensAck{Valid: valid}, nil
-}
-
-// RemoveSession sgate 调用：连接关闭时清理会话缓存（best-effort，减少踢人路由死连接）。
-// 失败仅记日志，不回滚不断连——sgate 侧 TTL 24h 兜底。
-func (h *LoginServer) RemoveSession(
-	ctx context.Context,
-	req *loginproto.RemoveSessionReq,
-) (*loginproto.RemoveSessionAck, error) {
-	if err := rmodel.RemoveSession(ctx, req.GetSgateId(), req.GetConnId()); err != nil {
-		tlog.Warn(ctx, "grpc RemoveSession failed sgate:%s conn:%s err:%v", req.GetSgateId(), req.GetConnId(), err)
-		return &loginproto.RemoveSessionAck{Removed: false}, nil
-	}
-	return &loginproto.RemoveSessionAck{Removed: true}, nil
 }
