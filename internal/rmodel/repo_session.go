@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// 会话缓存（踢人路由索引，单向 Kick 模型 v2）：
+// 会话缓存（踢人路由索引，单向 Kick 模型）：
 //
 //	sess:conn:{sgateId}:{connId} hash  {account_id, ip, login_at}
 //	sess:acct:{accountId}         set  成员 {sgateId}:{connId}
@@ -16,7 +16,7 @@ import (
 //	sess:ip24:{a.b.c.0/24}        set  成员 {sgateId}:{connId}（CIDR 踢人路由用）
 //
 // 由 loginserver 在 ValidateLoginToken 校验通过（sgate 携带会话上下文）时写入；
-// 无 Unbind 靠 TTL 收敛，但 sgate OnClose 会 best-effort 调 RemoveSession 清理。
+// 无主动清理，连接关闭后靠 TTL 自然过期收敛（无效 Kick 对已关闭连接无副作用）。
 // 封禁时 SMEMBERS 解析 sgateId 去重后下发 Kick；CIDR 封禁走 ip24 前缀键路由。
 const sessionCacheTTL = 24 * time.Hour
 
