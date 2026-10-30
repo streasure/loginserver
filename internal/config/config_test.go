@@ -42,7 +42,6 @@ db:
 
 acl:
   cacheTtl: 5m
-  genRefresh: 2s
   adminToken: "test-admin-token"
 
 sgate:

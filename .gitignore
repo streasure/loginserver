@@ -9,6 +9,10 @@
 *.log
 *.out
 *.err
+logs/
+
+# Build output
+bin/
 
 # Test files
 *.test

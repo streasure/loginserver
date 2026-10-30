@@ -66,13 +66,11 @@ type LimitInfo struct {
 	ValidateTokenCacheTtl   string `default:"1s"`
 }
 
-// AclConfig ACL（黑白名单/封禁角色）缓存与管理接口配置。
-// 缓存采用版本号（gen）token：每次写库 INCR 全局版本，条目携带写入时版本，
-// 读侧本地版本快照过期（genRefresh）后强制回源，跨节点脏数据窗口 ≈ genRefresh，
-// 条目 TTL（cacheTtl）为 redis 数据丢失/写失败时的兜底上界。
+// AclConfig ACL（黑白名单/封禁角色）与服务器列表配置。
+// 白/黑名单/封禁角色走进程内全量快照（启动加载 + 写路径即时应用，无 Redis 依赖）；
+// 服务器列表读写 Redis per-key 缓存，cacheTtl 为该缓存的 TTL。
 type AclConfig struct {
 	CacheTtl   time.Duration `yaml:"cacheTtl" default:"5m"`
-	GenRefresh time.Duration `yaml:"genRefresh" default:"2s"`
 	AdminToken string        `yaml:"adminToken"` // HTTP 管理接口鉴权头 X-Admin-Token 的期望值
 	// TrustedProxies 信任的反代 IP/CIDR（经 ugin.WithTrustedProxies 接入 gin）：
 	// 空 = 只信 TCP 对端，防 X-Forwarded-For 伪造；部署在反代/SLB 之后时必须配置
@@ -143,9 +141,6 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Acl.CacheTtl <= 0 {
 		return errors.New("acl.cacheTtl must be positive")
-	}
-	if cfg.Acl.GenRefresh <= 0 {
-		return errors.New("acl.genRefresh must be positive")
 	}
 	if cfg.Acl.AdminToken == "" {
 		return errors.New("acl.adminToken is required")
