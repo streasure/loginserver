@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -71,7 +70,7 @@ func (d *aclData) clone() *aclData {
 type AclService struct {
 	component.BaseComponent
 	snap     atomic.Pointer[aclData] // 全量快照（写路径原子替换）
-	mu       sync.Mutex              // 串行化快照写路径（applyLocal）
+	mu       sync.Mutex              // 串行化快照写路径（apply）
 	sf       singleflight.Group      // servers 回源合并
 	redisTTL time.Duration           // Redis 条目缓存 TTL（servers 列表用）
 }
@@ -232,7 +231,7 @@ func (s *AclService) AddWhiteIP(ctx context.Context, ip, remark, operator string
 		return err
 	}
 	tlog.Info(ctx, "acl add whitelist ip:%s operator:%s", norm, operator)
-	s.applyLocal(rmodel.AclKindWhiteIP, norm, true)
+	s.applyWhiteIP(norm, true)
 	return nil
 }
 
@@ -246,7 +245,7 @@ func (s *AclService) RemoveWhiteIP(ctx context.Context, ip, operator string) err
 		return err
 	}
 	tlog.Info(ctx, "acl remove whitelist ip:%s operator:%s", norm, operator)
-	s.applyLocal(rmodel.AclKindWhiteIP, norm, false)
+	s.applyWhiteIP(norm, false)
 	return nil
 }
 
@@ -260,7 +259,7 @@ func (s *AclService) AddBlackIP(ctx context.Context, ip, remark, operator string
 		return err
 	}
 	tlog.Info(ctx, "acl add blacklist ip:%s operator:%s", norm, operator)
-	s.applyLocal(rmodel.AclKindBlackIP, norm, true)
+	s.applyBlackIP(norm, true)
 	// 先落权威库、再 best-effort 踢在线连接（2s 超时/台，失败不回滚）。
 	// CIDR 无法用 sess:ip:{exact} 索引路由，改为向全部已知 sgate 下发（每台本地前缀匹配）。
 	kickIPAfterBan(ctx, norm)
@@ -277,7 +276,7 @@ func (s *AclService) RemoveBlackIP(ctx context.Context, ip, operator string) err
 		return err
 	}
 	tlog.Info(ctx, "acl remove blacklist ip:%s operator:%s", norm, operator)
-	s.applyLocal(rmodel.AclKindBlackIP, norm, false)
+	s.applyBlackIP(norm, false)
 	return nil
 }
 
@@ -290,7 +289,7 @@ func (s *AclService) AddBannedRole(ctx context.Context, roleID, reason, operator
 		return err
 	}
 	tlog.Info(ctx, "acl add banned role:%s operator:%s", roleID, operator)
-	s.applyLocal(rmodel.AclKindRole, roleID, true)
+	s.applyRole(roleID, true)
 	// 先落权威库、再 best-effort 踢在线连接（2s 超时/台，失败不回滚）
 	kickAccountAfterBan(ctx, roleID)
 	return nil
@@ -305,25 +304,27 @@ func (s *AclService) RemoveBannedRole(ctx context.Context, roleID, operator stri
 		return err
 	}
 	tlog.Info(ctx, "acl remove banned role:%s operator:%s", roleID, operator)
-	s.applyLocal(rmodel.AclKindRole, roleID, false)
+	s.applyRole(roleID, false)
 	return nil
 }
 
-// ServerList 服务器列表（带缓存）
+// ServerList 服务器列表（Redis 缓存优先，miss 单飞回源 MySQL）
 func (s *AclService) ServerList(ctx context.Context) ([]dmodel.ServerInfo, error) {
-	if list, ok := s.lookupServers(ctx); ok {
+	if list, ok := rmodel.GetServersCache(ctx); ok {
 		return list, nil
 	}
-	v, err, _ := s.sf.Do(rmodel.AclKindServers, func() (any, error) {
+	v, err, _ := s.sf.Do("servers", func() (any, error) {
 		loaderCtx := context.WithoutCancel(ctx)
-		if list, ok := s.lookupServers(loaderCtx); ok {
+		if list, ok := rmodel.GetServersCache(loaderCtx); ok {
 			return list, nil
 		}
 		list, err := dmodel.ListServers(loaderCtx)
 		if err != nil {
 			return nil, err
 		}
-		s.storeServers(loaderCtx, list)
+		if err := rmodel.SetServersCache(loaderCtx, list, s.redisTTL); err != nil {
+			tlog.Warn(loaderCtx, "acl: set server list cache failed err:%v", err)
+		}
 		return list, nil
 	})
 	if err != nil {
@@ -347,45 +348,43 @@ func (s *AclService) snapshot(ctx context.Context) (*aclData, error) {
 	return nil, errors.New("acl snapshot unavailable")
 }
 
-// applyLocal 写路径落地：在本地快照上即时应用增量（读己之写）。
-// id 已是 normalizeAclIP 规范化后的字符串（纯 IP 或 CIDR）。
-// 全程持有 mu：并发写者串行化，后者 clone 到前者结果，不丢更新。
-func (s *AclService) applyLocal(kind, id string, add bool) {
+// apply 写路径公共段：写锁内 clone 快照、应用增量、原子替换。
+// 并发写者经 mu 串行化，后者 clone 到前者结果，不丢更新。
+func (s *AclService) apply(mutate func(*aclData)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	old := s.snap.Load()
 	next := newAclData()
-	if old != nil {
+	if old := s.snap.Load(); old != nil {
 		next = old.clone()
 	}
-	switch kind {
-	case rmodel.AclKindWhiteIP:
-		if strings.Contains(id, "/") {
-			next.applyPrefix(&next.whitePrefix, id, add)
-		} else if add {
-			next.white[id] = struct{}{}
-		} else {
-			delete(next.white, id)
-		}
-	case rmodel.AclKindBlackIP:
-		if strings.Contains(id, "/") {
-			next.applyPrefix(&next.blackPrefix, id, add)
-		} else if add {
-			next.black[id] = struct{}{}
-		} else {
-			delete(next.black, id)
-		}
-	case rmodel.AclKindRole:
-		if add {
-			next.roles[id] = struct{}{}
-		} else {
-			delete(next.roles, id)
-		}
-	default:
-		return
-	}
+	mutate(next)
 	s.snap.Store(next)
 	updateAclSnapshotGauges(next)
+}
+
+// applyWhiteIP 白名单增删落地到本地快照（id 为规范化后的纯 IP 或 CIDR）
+func (s *AclService) applyWhiteIP(id string, add bool) {
+	s.apply(func(d *aclData) {
+		applyIPEdge(d.white, &d.whitePrefix, id, add)
+	})
+}
+
+// applyBlackIP 黑名单增删落地到本地快照
+func (s *AclService) applyBlackIP(id string, add bool) {
+	s.apply(func(d *aclData) {
+		applyIPEdge(d.black, &d.blackPrefix, id, add)
+	})
+}
+
+// applyRole 封禁角色增删落地到本地快照
+func (s *AclService) applyRole(roleID string, add bool) {
+	s.apply(func(d *aclData) {
+		if add {
+			d.roles[roleID] = struct{}{}
+		} else {
+			delete(d.roles, roleID)
+		}
+	})
 }
 
 // reload 全量重载快照（从 MySQL 加载全部白/黑名单/封禁角色）
@@ -407,10 +406,10 @@ func (s *AclService) reload(ctx context.Context) error {
 	}
 	d := newAclData()
 	for _, row := range whiteRows {
-		d.addIPEdge(d.white, &d.whitePrefix, row.IP)
+		applyIPEdge(d.white, &d.whitePrefix, row.IP, true)
 	}
 	for _, row := range blackRows {
-		d.addIPEdge(d.black, &d.blackPrefix, row.IP)
+		applyIPEdge(d.black, &d.blackPrefix, row.IP, true)
 	}
 	for _, row := range roleRows {
 		d.roles[row.RoleID] = struct{}{}
@@ -418,29 +417,6 @@ func (s *AclService) reload(ctx context.Context) error {
 	s.snap.Store(d)
 	updateAclSnapshotGauges(d)
 	return nil
-}
-
-func (s *AclService) lookupServers(ctx context.Context) ([]dmodel.ServerInfo, bool) {
-	entry, err := rmodel.GetAclEntry(ctx, rmodel.AclKindServers, "")
-	if err != nil || entry == nil || len(entry.Data) == 0 {
-		return nil, false
-	}
-	var list []dmodel.ServerInfo
-	if err := json.Unmarshal(entry.Data, &list); err != nil {
-		return nil, false
-	}
-	return list, true
-}
-
-func (s *AclService) storeServers(ctx context.Context, list []dmodel.ServerInfo) {
-	raw, err := json.Marshal(list)
-	if err != nil {
-		return
-	}
-	entry := &rmodel.AclEntry{Data: raw}
-	if err := rmodel.SetAclEntry(ctx, rmodel.AclKindServers, "", entry, s.redisTTL); err != nil {
-		tlog.Warn(ctx, "acl: set server list failed err:%v", err)
-	}
 }
 
 // normalizeAclIP 规范化 IP 或 CIDR（委托 dmodel.NormalizeIP，单一实现）。
@@ -462,19 +438,22 @@ func parseAclAddr(ip string) (netip.Addr, bool) {
 	return addr, true
 }
 
-// addIPEdge 按条目形态分流：纯 IP 进 exact 集合，CIDR 解析进前缀切片
-func (d *aclData) addIPEdge(exact map[string]struct{}, prefixes *[]netip.Prefix, entry string) {
-	if strings.Contains(entry, "/") {
-		if p, err := netip.ParsePrefix(entry); err == nil {
-			*prefixes = append(*prefixes, p)
-		}
+// applyIPEdge IP 条目增删：纯 IP 进 exact 集合（O(1)），CIDR 进前缀切片。
+// reload（add=true）与写路径共用同一实现。
+func applyIPEdge(exact map[string]struct{}, prefixes *[]netip.Prefix, id string, add bool) {
+	if strings.Contains(id, "/") {
+		applyPrefix(prefixes, id, add)
 		return
 	}
-	exact[entry] = struct{}{}
+	if add {
+		exact[id] = struct{}{}
+	} else {
+		delete(exact, id)
+	}
 }
 
 // applyPrefix 前缀切片的增删（按 String() 精确匹配；生产条目量小，线性扫可接受）
-func (d *aclData) applyPrefix(prefixes *[]netip.Prefix, id string, add bool) {
+func applyPrefix(prefixes *[]netip.Prefix, id string, add bool) {
 	p, err := netip.ParsePrefix(id)
 	if err != nil {
 		return

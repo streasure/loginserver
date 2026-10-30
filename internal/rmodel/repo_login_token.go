@@ -7,29 +7,19 @@ import (
 	"github.com/streasure/util/tlog"
 )
 
-type LoginTokenModel struct {
-}
-
-var loginTokenModel = &LoginTokenModel{}
-
-func GetLoginTokenModel() *LoginTokenModel {
-	return loginTokenModel
-}
-
-// genLoginTokenKey 拼接 loginToken 的 Redis key：
+// loginTokenKey 拼接 loginToken 的 Redis key：
 // {belong}/{serverType}:{zone}:loginToken:{accountId}
-func (m *LoginTokenModel) genLoginTokenKey(accountId string) string {
+func loginTokenKey(accountId string) string {
 	return getKey("loginToken", accountId)
 }
 
 // SetLoginToken 写入 loginToken，带过期时间
-func (m *LoginTokenModel) SetLoginToken(ctx context.Context, accountId, token string, expireSeconds int64) error {
-	key := m.genLoginTokenKey(accountId)
+func SetLoginToken(ctx context.Context, accountId, token string, expireSeconds int64) error {
 	cli, err := GetRedisClient()
 	if err != nil {
 		return err
 	}
-	if err = cli.Set(ctx, key, token, time.Second*time.Duration(expireSeconds)).Err(); err != nil {
+	if err = cli.Set(ctx, loginTokenKey(accountId), token, time.Second*time.Duration(expireSeconds)).Err(); err != nil {
 		// token 是 bearer 凭证，不落日志
 		tlog.Error(ctx, "redis set account:%s login token err:%v", accountId, err)
 		return err
@@ -38,13 +28,12 @@ func (m *LoginTokenModel) SetLoginToken(ctx context.Context, accountId, token st
 }
 
 // GetLoginToken 读取 loginToken，key 不存在时返回空串和 redis.Nil
-func (m *LoginTokenModel) GetLoginToken(ctx context.Context, accountId string) (string, error) {
-	key := m.genLoginTokenKey(accountId)
+func GetLoginToken(ctx context.Context, accountId string) (string, error) {
 	cli, err := GetRedisClient()
 	if err != nil {
 		return "", err
 	}
-	token, err := cli.Get(ctx, key).Result()
+	token, err := cli.Get(ctx, loginTokenKey(accountId)).Result()
 	if err != nil {
 		tlog.Debug(ctx, "redis get account:%s login token err:%v", accountId, err)
 		return "", err
@@ -54,7 +43,7 @@ func (m *LoginTokenModel) GetLoginToken(ctx context.Context, accountId string) (
 
 // GetLoginTokens 批量读取 loginToken（MGET 合并往返）。
 // 已过期/不存在的条目不出现在返回 map 中；单次调用建议不超过数百 key。
-func (m *LoginTokenModel) GetLoginTokens(ctx context.Context, accountIds []string) (map[string]string, error) {
+func GetLoginTokens(ctx context.Context, accountIds []string) (map[string]string, error) {
 	if len(accountIds) == 0 {
 		return nil, nil
 	}
@@ -64,7 +53,7 @@ func (m *LoginTokenModel) GetLoginTokens(ctx context.Context, accountIds []strin
 	}
 	keys := make([]string, len(accountIds))
 	for i, id := range accountIds {
-		keys[i] = m.genLoginTokenKey(id)
+		keys[i] = loginTokenKey(id)
 	}
 	vals, err := cli.MGet(ctx, keys...).Result()
 	if err != nil {

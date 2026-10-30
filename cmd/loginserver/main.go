@@ -75,12 +75,9 @@ func main() {
 	// 须在业务组件（rpc/ugin）之前 Init，dmodel 经 ugorm.GetDbContext 取用
 	container.Add(ugorm.NewComponent(&conf.Db))
 
-	// ACL 服务：启动全量加载黑白名单/封禁角色快照（失败即失败启动），后台 gen 轮询同步其他节点写入；
-	// 须在 gorm 之后 Init（快照加载依赖 MySQL）
+	// ACL 服务：启动全量加载黑白名单/封禁角色快照（失败即失败启动），
+	// 写路径即时应用增量到本地快照；须在 gorm 之后 Init（快照加载依赖 MySQL）
 	container.Add(service.GetAclService())
-
-	// token manager（loginToken 校验的进程内缓存，须在 rpc 之前 Init）
-	container.Add(service.GetTokenManager())
 
 	// gRPC 业务组件
 	rpcServer := service.NewLoginGrpcServer()

@@ -66,3 +66,7 @@ acl:
   cacheTtl: 5m
   adminToken: "loginserver-admin"
   trustedProxies: []
+
+# loginserver 与 sgate Kick 联动（单向 Kick 模型：封禁落库后下发踢人 RPC）
+sgate:
+  internalToken: "loginserver-sgate-internal"  # 与 sgate kickInternalToken 保持一致

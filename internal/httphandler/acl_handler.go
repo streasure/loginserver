@@ -1,6 +1,7 @@
 package httphandler
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"net/http"
@@ -63,100 +64,77 @@ func aclOpFailed(c *gin.Context, op string, err error) {
 	c.JSON(http.StatusOK, uhttp.Failure(dto.CodeAclFailed, op+" failed"))
 }
 
-// AddWhitelistIP 新增白名单 IP（支持纯 IP 与 CIDR）：写 MySQL 并同步 Redis 缓存
-func AddWhitelistIP(c *gin.Context) {
+// handleAdminMutate 管理接口写操作公共段：token 鉴权 → 绑定请求体 → 执行 → 统一响应。
+// fn 返回 ErrInvalidIP 按参数错误响应，其余按操作失败响应。
+func handleAdminMutate[T any](c *gin.Context, op string, fn func(ctx context.Context, req *T) error) {
 	if !checkAdminToken(c) {
 		return
 	}
-	var req dto.AclIPReq
+	var req T
 	if !bindJSON(c, &req) {
 		return
 	}
-	if err := service.GetAclService().AddWhiteIP(c.Request.Context(), req.IP, req.Remark, req.Operator); err != nil {
-		aclOpFailed(c, "add whitelist ip", err)
+	if err := fn(c.Request.Context(), &req); err != nil {
+		aclOpFailed(c, op, err)
 		return
 	}
 	c.JSON(http.StatusOK, uhttp.Success(true))
+}
+
+// handleAdminList 管理接口列表公共段：token 鉴权 → 解析 limit → 拉取 → 统一响应。
+func handleAdminList[T any](c *gin.Context, name string, fn func(ctx context.Context, limit int) ([]T, error)) {
+	if !checkAdminToken(c) {
+		return
+	}
+	rows, err := fn(c.Request.Context(), listLimit(c, aclListDefaultLimit, aclListMaxLimit))
+	if err != nil {
+		tlog.Error(c.Request.Context(), "acl %s failed err:%v", name, err)
+		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeAclFailed, name+" failed"))
+		return
+	}
+	c.JSON(http.StatusOK, uhttp.Success(rows))
+}
+
+// AddWhitelistIP 新增白名单 IP（支持纯 IP 与 CIDR）
+func AddWhitelistIP(c *gin.Context) {
+	handleAdminMutate(c, "add whitelist ip", func(ctx context.Context, req *dto.AclIPReq) error {
+		return service.GetAclService().AddWhiteIP(ctx, req.IP, req.Remark, req.Operator)
+	})
 }
 
 // DelWhitelistIP 删除白名单 IP
 func DelWhitelistIP(c *gin.Context) {
-	if !checkAdminToken(c) {
-		return
-	}
-	var req dto.AclIPDelReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	if err := service.GetAclService().RemoveWhiteIP(c.Request.Context(), req.IP, req.Operator); err != nil {
-		aclOpFailed(c, "delete whitelist ip", err)
-		return
-	}
-	c.JSON(http.StatusOK, uhttp.Success(true))
+	handleAdminMutate(c, "delete whitelist ip", func(ctx context.Context, req *dto.AclIPDelReq) error {
+		return service.GetAclService().RemoveWhiteIP(ctx, req.IP, req.Operator)
+	})
 }
 
-// AddBlacklistIP 新增黑名单 IP（支持纯 IP 与 CIDR）：写 MySQL 并同步 Redis 缓存
+// AddBlacklistIP 新增黑名单 IP（支持纯 IP 与 CIDR）：落库后 best-effort 踢在线连接
 func AddBlacklistIP(c *gin.Context) {
-	if !checkAdminToken(c) {
-		return
-	}
-	var req dto.AclIPReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	if err := service.GetAclService().AddBlackIP(c.Request.Context(), req.IP, req.Remark, req.Operator); err != nil {
-		aclOpFailed(c, "add blacklist ip", err)
-		return
-	}
-	c.JSON(http.StatusOK, uhttp.Success(true))
+	handleAdminMutate(c, "add blacklist ip", func(ctx context.Context, req *dto.AclIPReq) error {
+		return service.GetAclService().AddBlackIP(ctx, req.IP, req.Remark, req.Operator)
+	})
 }
 
 // DelBlacklistIP 删除黑名单 IP
 func DelBlacklistIP(c *gin.Context) {
-	if !checkAdminToken(c) {
-		return
-	}
-	var req dto.AclIPDelReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	if err := service.GetAclService().RemoveBlackIP(c.Request.Context(), req.IP, req.Operator); err != nil {
-		aclOpFailed(c, "delete blacklist ip", err)
-		return
-	}
-	c.JSON(http.StatusOK, uhttp.Success(true))
+	handleAdminMutate(c, "delete blacklist ip", func(ctx context.Context, req *dto.AclIPDelReq) error {
+		return service.GetAclService().RemoveBlackIP(ctx, req.IP, req.Operator)
+	})
 }
 
-// AddBannedRole 封禁角色（HTTP 管理入口，与 sgate gRPC 入口同底层）
+// AddBannedRole 封禁角色：落库后 best-effort 踢该账号在线连接
 func AddBannedRole(c *gin.Context) {
-	if !checkAdminToken(c) {
-		return
-	}
-	var req dto.AclBannedRoleReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	if err := service.GetAclService().AddBannedRole(c.Request.Context(), req.RoleId, req.Reason, req.Operator); err != nil {
-		aclOpFailed(c, "add banned role", err)
-		return
-	}
-	c.JSON(http.StatusOK, uhttp.Success(true))
+	handleAdminMutate(c, "add banned role", func(ctx context.Context, req *dto.AclBannedRoleReq) error {
+		return service.GetAclService().AddBannedRole(ctx, req.RoleId, req.Reason, req.Operator)
+	})
 }
 
 // DelBannedRole 解除角色封禁
 func DelBannedRole(c *gin.Context) {
-	if !checkAdminToken(c) {
-		return
-	}
-	var req dto.AclBannedRoleDelReq
-	if !bindJSON(c, &req) {
-		return
-	}
-	if err := service.GetAclService().RemoveBannedRole(c.Request.Context(), req.RoleId, req.Operator); err != nil {
-		aclOpFailed(c, "remove banned role", err)
-		return
-	}
-	c.JSON(http.StatusOK, uhttp.Success(true))
+	handleAdminMutate(c, "remove banned role", func(ctx context.Context, req *dto.AclBannedRoleDelReq) error {
+		return service.GetAclService().RemoveBannedRole(ctx, req.RoleId, req.Operator)
+	})
 }
 
 // listLimit 解析 ?limit=（缺省/非法/非正用 def，超上限钳到 max）。
@@ -172,46 +150,19 @@ func listLimit(c *gin.Context, def, max int) int {
 	return v
 }
 
-// ListWhitelistIPs 白名单列表（直查 MySQL，需管理 token）
+// ListWhitelistIPs 白名单列表（直查 MySQL）
 func ListWhitelistIPs(c *gin.Context) {
-	if !checkAdminToken(c) {
-		return
-	}
-	rows, err := service.GetAclService().ListWhiteIPs(c.Request.Context(), listLimit(c, aclListDefaultLimit, aclListMaxLimit))
-	if err != nil {
-		tlog.Error(c.Request.Context(), "list whitelist failed err:%v", err)
-		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeAclFailed, "list whitelist failed"))
-		return
-	}
-	c.JSON(http.StatusOK, uhttp.Success(rows))
+	handleAdminList(c, "list whitelist", service.GetAclService().ListWhiteIPs)
 }
 
 // ListBlacklistIPs 黑名单列表
 func ListBlacklistIPs(c *gin.Context) {
-	if !checkAdminToken(c) {
-		return
-	}
-	rows, err := service.GetAclService().ListBlackIPs(c.Request.Context(), listLimit(c, aclListDefaultLimit, aclListMaxLimit))
-	if err != nil {
-		tlog.Error(c.Request.Context(), "list blacklist failed err:%v", err)
-		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeAclFailed, "list blacklist failed"))
-		return
-	}
-	c.JSON(http.StatusOK, uhttp.Success(rows))
+	handleAdminList(c, "list blacklist", service.GetAclService().ListBlackIPs)
 }
 
 // ListBannedRoles 封禁角色列表
 func ListBannedRoles(c *gin.Context) {
-	if !checkAdminToken(c) {
-		return
-	}
-	rows, err := service.GetAclService().ListBannedRoles(c.Request.Context(), listLimit(c, aclListDefaultLimit, aclListMaxLimit))
-	if err != nil {
-		tlog.Error(c.Request.Context(), "list banned roles failed err:%v", err)
-		c.JSON(http.StatusOK, uhttp.Failure(dto.CodeAclFailed, "list banned roles failed"))
-		return
-	}
-	c.JSON(http.StatusOK, uhttp.Success(rows))
+	handleAdminList(c, "list banned roles", service.GetAclService().ListBannedRoles)
 }
 
 // ListServers 服务器列表（读缓存，无需管理 token）

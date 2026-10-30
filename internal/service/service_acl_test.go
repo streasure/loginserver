@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/streasure/loginserver/internal/dmodel"
-	"github.com/streasure/loginserver/internal/rmodel"
 )
 
 // fakeAclStore 内存版名单数据源（模拟 MySQL）
@@ -51,10 +50,10 @@ func loadTestData(svc *AclService, store *fakeAclStore) {
 	defer store.mu.Unlock()
 	d := newAclData()
 	for _, row := range store.white {
-		d.addIPEdge(d.white, &d.whitePrefix, row.IP)
+		applyIPEdge(d.white, &d.whitePrefix, row.IP, true)
 	}
 	for _, row := range store.black {
-		d.addIPEdge(d.black, &d.blackPrefix, row.IP)
+		applyIPEdge(d.black, &d.blackPrefix, row.IP, true)
 	}
 	for _, row := range store.roles {
 		d.roles[row.RoleID] = struct{}{}
@@ -108,27 +107,27 @@ func TestAclSnapshotReadZeroStorageDependency(t *testing.T) {
 }
 
 // 写路径读己之写：落库后本地快照即时生效（无需等重载）
-func TestAclWriteApplyLocalImmediate(t *testing.T) {
+func TestAclWriteApplyImmediate(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeAclStore()
 	svc := newTestAclService()
 	loadTestData(svc, store)
 
-	svc.applyLocal(rmodel.AclKindBlackIP, "5.5.5.5", true)
+	svc.applyBlackIP("5.5.5.5", true)
 	if hit, err := svc.IsBlacklistedIP(ctx, "5.5.5.5"); err != nil || !hit {
 		t.Errorf("write-your-reading: hit=%v err=%v", hit, err)
 	}
 
-	svc.applyLocal(rmodel.AclKindBlackIP, "5.5.5.5", false)
+	svc.applyBlackIP("5.5.5.5", false)
 	if hit, err := svc.IsBlacklistedIP(ctx, "5.5.5.5"); err != nil || hit {
 		t.Errorf("remove-your-reading: hit=%v err=%v", hit, err)
 	}
 
-	svc.applyLocal(rmodel.AclKindRole, "acc-1", true)
+	svc.applyRole("acc-1", true)
 	if hit, err := svc.IsRoleBanned(ctx, "acc-1"); err != nil || !hit {
 		t.Errorf("role ban write-your-reading: hit=%v err=%v", hit, err)
 	}
-	svc.applyLocal(rmodel.AclKindRole, "acc-1", false)
+	svc.applyRole("acc-1", false)
 	if hit, err := svc.IsRoleBanned(ctx, "acc-1"); err != nil || hit {
 		t.Errorf("role unban write-your-reading: hit=%v err=%v", hit, err)
 	}
@@ -202,27 +201,27 @@ func TestAclCIDRWhitelistMatch(t *testing.T) {
 	}
 }
 
-// CIDR applyLocal 增删：add/remove 后快照即时生效（读己之写）
-func TestAclCIDRApplyLocal(t *testing.T) {
+// CIDR apply 增删：add/remove 后快照即时生效（读己之写）
+func TestAclCIDRApply(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeAclStore()
 	svc := newTestAclService()
 	loadTestData(svc, store)
 
 	// add CIDR
-	svc.applyLocal(rmodel.AclKindBlackIP, "203.0.113.0/24", true)
+	svc.applyBlackIP("203.0.113.0/24", true)
 	if hit, err := svc.IsBlacklistedIP(ctx, "203.0.113.50"); err != nil || !hit {
 		t.Errorf("after add cidr: hit=%v err=%v", hit, err)
 	}
 	// remove CIDR
-	svc.applyLocal(rmodel.AclKindBlackIP, "203.0.113.0/24", false)
+	svc.applyBlackIP("203.0.113.0/24", false)
 	if hit, err := svc.IsBlacklistedIP(ctx, "203.0.113.50"); err != nil || hit {
 		t.Errorf("after remove cidr: hit=%v err=%v, want false/nil", hit, err)
 	}
 }
 
-// 并发写不丢更新：多 goroutine 并发 applyLocal 后，快照必须包含全部增量。
-func TestAclConcurrentApplyLocalNoLostUpdate(t *testing.T) {
+// 并发写不丢更新：多 goroutine 并发 apply 后，快照必须包含全部增量。
+func TestAclConcurrentApplyNoLostUpdate(t *testing.T) {
 	store := newFakeAclStore()
 	svc := newTestAclService()
 	loadTestData(svc, store)
@@ -234,7 +233,7 @@ func TestAclConcurrentApplyLocalNoLostUpdate(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			roleID := fmt.Sprintf("concurrent-role-%02d", i)
-			svc.applyLocal(rmodel.AclKindRole, roleID, true)
+			svc.applyRole(roleID, true)
 		}(i)
 	}
 	wg.Wait()
