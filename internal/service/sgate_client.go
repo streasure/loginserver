@@ -11,12 +11,8 @@ import (
 
 	"github.com/streasure/protocol/enums"
 	protoGw "github.com/streasure/protocol/gateway"
-	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/tlog"
 	"github.com/streasure/util/udiscovery"
-	"github.com/streasure/util/ugrpc"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // kickTimeout 单台 sgate 的 Kick RPC 超时（best-effort，不回滚封禁）
@@ -25,49 +21,35 @@ const kickTimeout = 2 * time.Second
 // sgateServerType Kick 下发的目标服务类型（坐标第二段，sgate 自注册同型）
 const sgateServerType = enums.ServerType_SERVER_TYPE_SGATE
 
-// RegisterSgateClients 把 SGATE Kick 客户端注册进进程级注册表（main 装配期调用，
-// 发现不可用即启动失败）。之后按 (belong, SGATE, zone, sgateID) 取客户端，
-// 实例增删由 etcd watch 自动驱动建连/摘除，本包不再持有池对象：
-//   - sgate 自注册的是 JSON 复合地址，经 netutil.ParseRegisterGRPCAddr 取拨号口；
-//   - 拨号携带 x-internal-token，与 sgate 侧 kickInternalToken 校验对齐。
+// sgateKick 已绑定 SGATE 坐标的 Kick 客户端句柄（RegisterSgateClients 赋值，
+// 未注册/注册失败时为 nil，取用安全返回 false）。实例增删由 etcd watch 自动驱动。
+var sgateKick *udiscovery.Client[protoGw.KickServiceClient]
+
+// RegisterSgateClients 注册 SGATE Kick 客户端句柄（main 装配期调用，
+// 发现不可用即启动失败）。spec 用两个预设收敛拨号拼装：
+//   - InternalToken：x-internal-token 鉴权 + insecure 凭证（与 sgate 侧 kickInternalToken 同值）；
+//   - JSONAddr：sgate 自注册的 JSON 复合地址自动取 gRPC 拨号口。
 func RegisterSgateClients() error {
 	cfg := config.GetConfig()
-	return udiscovery.RegisterClient[protoGw.KickServiceClient](udiscovery.ClientSpec[protoGw.KickServiceClient]{
-		Belong:     cfg.Belong,
-		ServerType: sgateServerType,
-		Zone:       cfg.Zone,
-		Etcd:       cfg.Uetcd(),
-		NewClient:  protoGw.NewKickServiceClient,
-		DialOptions: append(
-			ugrpc.TokenDialOptions("x-internal-token", cfg.Sgate.InternalToken),
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-		),
-		AddressTransform: netutil.ParseRegisterGRPCAddr,
+	h, err := udiscovery.Dial[protoGw.KickServiceClient](udiscovery.ClientSpec[protoGw.KickServiceClient]{
+		Belong:        cfg.Belong,
+		ServerType:    sgateServerType,
+		Zone:          cfg.Zone,
+		Etcd:          cfg.Uetcd(),
+		NewClient:     protoGw.NewKickServiceClient,
+		InternalToken: cfg.Sgate.InternalToken,
+		JSONAddr:      true,
 	})
-}
-
-// sgateTarget 当前 loginserver 关注的 SGATE 服务坐标（belong/zone 取自配置）
-func sgateTarget() (string, enums.ServerType, string) {
-	cfg := config.GetConfig()
-	return cfg.Belong, sgateServerType, cfg.Zone
-}
-
-// sgateClients 当前已发现的全部 sgate 实例 ID（CIDR 封禁无法用 sess:ip 索引路由，
-// 需向全部 sgate 下发，各台本地前缀匹配）；未注册时为 nil
-func sgateClients() []string {
-	belong, serverType, zone := sgateTarget()
-	return udiscovery.ClientIDs(belong, serverType, zone)
-}
-
-// sgateClient 按实例 ID 取 Kick 客户端；false = 该实例未发现/注销/重建中
-func sgateClient(sgateID string) (protoGw.KickServiceClient, bool) {
-	belong, serverType, zone := sgateTarget()
-	return udiscovery.GetClient[protoGw.KickServiceClient](belong, serverType, zone, sgateID)
+	if err != nil {
+		return err
+	}
+	sgateKick = h
+	return nil
 }
 
 // kickSgateIP 请求指定 sgate 踢掉该 IP 的全部本地连接；返回踢中数
 func kickSgateIP(ctx context.Context, sgateID, ip, reason string) (int32, error) {
-	client, ok := sgateClient(sgateID)
+	client, ok := sgateKick.Get(sgateID)
 	if !ok {
 		return 0, fmt.Errorf("sgate %s not registered", sgateID)
 	}
@@ -80,7 +62,7 @@ func kickSgateIP(ctx context.Context, sgateID, ip, reason string) (int32, error)
 
 // kickSgateAccounts 请求指定 sgate 踢掉账号列表对应的本地连接；返回踢中数
 func kickSgateAccounts(ctx context.Context, sgateID string, accountIDs []string, reason string) (int32, error) {
-	client, ok := sgateClient(sgateID)
+	client, ok := sgateKick.Get(sgateID)
 	if !ok {
 		return 0, fmt.Errorf("sgate %s not registered", sgateID)
 	}
@@ -102,8 +84,10 @@ func kickSgateAccounts(ctx context.Context, sgateID string, accountIDs []string,
 //
 // 权威库已落库，失败仅告警计数、不回滚。
 func kickIPAfterBan(ctx context.Context, ip string) (kicked int) {
-	// 未注册/未发现任何 sgate（未配发现、或对端全离线）：跳过会话查询与下发
-	if len(sgateClients()) == 0 {
+	// 未注册/未发现任何 sgate（未配发现、或对端全离线）：跳过会话查询与下发。
+	// 全量清单一次取定，同一笔封禁内各分支共用（避免分支间快照漂移）
+	all := sgateKick.IDs()
+	if len(all) == 0 {
 		return 0
 	}
 	// 踢人链路不绑定调用方生命周期：admin/gRPC 请求取消或短 deadline
@@ -116,7 +100,7 @@ func kickIPAfterBan(ctx context.Context, ip string) (kicked int) {
 			tlog.Warn(base, "kickAfterBan cidr route failed ip:%s err:%v", ip, err)
 		}
 		if needAll || len(routed) == 0 {
-			sgates = sgateClients()
+			sgates = all
 		} else {
 			sgates = routed
 		}
@@ -127,9 +111,9 @@ func kickIPAfterBan(ctx context.Context, ip string) (kicked int) {
 			tlog.Warn(base, "kickAfterBan session lookup failed ip:%s err:%v", ip, err)
 		}
 		// 索引缺失/查询失败时兜底全量下发（无该 IP 连接的 sgate 本地匹配为 0，安全），
-		// 与 CIDR 分支的 sgateClients 语义对齐，避免"封禁落库成功但一台不踢"
+		// 与 CIDR 分支的全量下发语义对齐，避免"封禁落库成功但一台不踢"
 		if len(sgates) == 0 {
-			sgates = sgateClients()
+			sgates = all
 		}
 	}
 	for _, sgateID := range sgates {
@@ -158,7 +142,7 @@ func isCIDR(s string) bool {
 // 与 kickIPAfterBan 一致：踢人链路不绑定调用方生命周期
 func kickAccountAfterBan(ctx context.Context, accountID string) (kicked int) {
 	// 未注册/未发现任何 sgate：跳过会话查询与下发
-	if len(sgateClients()) == 0 {
+	if len(sgateKick.IDs()) == 0 {
 		return 0
 	}
 	base := context.WithoutCancel(ctx)

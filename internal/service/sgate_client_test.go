@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// TestSgateKickWithoutRegistration 未注册任何 sgate 时踢人链路安全短路：
-// 实例列表为空、按 ID 取 Kick 客户端返回未注册错误（默认注册表在测试中无人注册）。
-// 注册/发现/建连路径见 util/udiscovery 的单元与 etcd 集成测试。
+// TestSgateKickWithoutRegistration 未注册任何 sgate 时（nil 句柄）踢人链路安全短路：
+// 实例列表为空、按 ID 取 Kick 客户端返回未注册错误。注册/发现/建连路径见
+// util/udiscovery 的单元与 etcd 集成测试。
 func TestSgateKickWithoutRegistration(t *testing.T) {
-	if ids := sgateClients(); len(ids) != 0 {
-		t.Fatalf("sgateClients = %v, want empty", ids)
+	if ids := sgateKick.IDs(); len(ids) != 0 {
+		t.Fatalf("sgateKick.IDs = %v, want empty", ids)
 	}
 
 	_, err := kickSgateIP(context.Background(), "sgate-1", "10.0.0.1", "test")
