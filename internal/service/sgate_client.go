@@ -29,14 +29,15 @@ var sgateKick *udiscovery.Client[protoGw.KickServiceClient]
 // 发现不可用即启动失败）。spec 用两个预设收敛拨号拼装：
 //   - InternalToken：x-internal-token 鉴权 + insecure 凭证（与 sgate 侧 kickInternalToken 同值）；
 //   - JSONAddr：sgate 自注册的 JSON 复合地址自动取 gRPC 拨号口。
+//
+// 客户端类型由首参 NewKickServiceClient 推导，调用面零泛型语法。
 func RegisterSgateClients() error {
 	cfg := config.GetConfig()
-	h, err := udiscovery.Dial[protoGw.KickServiceClient](udiscovery.ClientSpec[protoGw.KickServiceClient]{
+	h, err := udiscovery.Dial(protoGw.NewKickServiceClient, udiscovery.ClientSpec{
 		Belong:        cfg.Belong,
 		ServerType:    sgateServerType,
 		Zone:          cfg.Zone,
 		Etcd:          cfg.Uetcd(),
-		NewClient:     protoGw.NewKickServiceClient,
 		InternalToken: cfg.Sgate.InternalToken,
 		JSONAddr:      true,
 	})
