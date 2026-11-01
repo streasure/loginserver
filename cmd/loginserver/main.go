@@ -15,6 +15,7 @@ import (
 	"github.com/streasure/util/component"
 	"github.com/streasure/util/netutil"
 	"github.com/streasure/util/tlog"
+	"github.com/streasure/util/udiscovery"
 	"github.com/streasure/util/ugin"
 	"github.com/streasure/util/ugorm"
 	"github.com/streasure/util/uload"
@@ -91,14 +92,14 @@ func main() {
 	}
 	container.Add(etcdComp)
 
-	// SGATE 发现 + Kick 客户端池（单向 Kick 模型：封禁落库后经池内连接下发 KickIP/KickAccounts）
-	sgateDisc, err := internalcomponent.NewSgateDiscoveryComponent()
-	if err != nil {
-		tlog.Error(context.TODO(), "create sgate discovery failed:%v", err)
+	// SGATE Kick 客户端注册（单向 Kick 模型：封禁落库后按坐标取 sgate 客户端下发
+	// KickIP/KickAccounts）。注册即建发现与连接池，发现不可用即启动失败；
+	// 注册表挂容器，退出时一次性关闭全部连接与发现
+	if err := service.RegisterSgateClients(); err != nil {
+		tlog.Error(context.TODO(), "register sgate clients failed:%v", err)
 		return
 	}
-	container.Add(sgateDisc)
-	container.Add(service.NewSgateClientPool(sgateDisc.Inner(), conf.Sgate.InternalToken))
+	container.Add(udiscovery.GetRegistry())
 
 	// HTTP 业务组件；uload 自适应准入由 LoadComponent 随容器接入（边界全为 0 时惰性
 	// 不生效），gin 中间件经 WithPreMiddleware 显式挂载（util 解耦后不再隐式接线），

@@ -1,23 +1,26 @@
 package service
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
-// TestNewSgateClientPoolNilDiscovery 未配置发现时池可用但无 source（AllIDs 为空、Destroy 安全）
-// （注册地址解析表驱动测试见 util/netutil/register_test.go）
-func TestNewSgateClientPoolNilDiscovery(t *testing.T) {
-	defer func() {
-		sgatePool = nil
-		sgatePoolInit.Store(false)
-	}()
-	p := NewSgateClientPool(nil, "test-token")
-	if p == nil {
-		t.Fatal("NewSgateClientPool(nil) should return pool")
+// TestSgateKickWithoutRegistration 未注册任何 sgate 时踢人链路安全短路：
+// 实例列表为空、按 ID 取 Kick 客户端返回未注册错误（默认注册表在测试中无人注册）。
+// 注册/发现/建连路径见 util/udiscovery 的单元与 etcd 集成测试。
+func TestSgateKickWithoutRegistration(t *testing.T) {
+	if ids := sgateClients(); len(ids) != 0 {
+		t.Fatalf("sgateClients = %v, want empty", ids)
 	}
-	if p.source != nil {
-		t.Error("source should be nil without discovery")
+
+	_, err := kickSgateIP(context.Background(), "sgate-1", "10.0.0.1", "test")
+	if err == nil || !strings.Contains(err.Error(), "not registered") {
+		t.Errorf("kickSgateIP err = %v, want not registered", err)
 	}
-	if got := p.AllIDs(); got != nil {
-		t.Errorf("AllIDs = %v, want nil", got)
+
+	_, err = kickSgateAccounts(context.Background(), "sgate-1", []string{"acct-1"}, "test")
+	if err == nil || !strings.Contains(err.Error(), "not registered") {
+		t.Errorf("kickSgateAccounts err = %v, want not registered", err)
 	}
-	p.Destroy()
 }
