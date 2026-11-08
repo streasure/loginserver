@@ -113,23 +113,18 @@ func (s *AclService) CheckLoginIP(ctx context.Context, clientIP string) error {
 	}
 	white, err := s.IsWhitelistedIP(ctx, clientIP)
 	if err != nil {
-		recordAclCheck("ip", "error")
 		return err
 	}
 	if white {
-		recordAclCheck("ip", "white")
 		return nil
 	}
 	black, err := s.IsBlacklistedIP(ctx, clientIP)
 	if err != nil {
-		recordAclCheck("ip", "error")
 		return err
 	}
 	if black {
-		recordAclCheck("ip", "block")
 		return ErrIPBlacklisted
 	}
-	recordAclCheck("ip", "pass")
 	return nil
 }
 
@@ -140,14 +135,11 @@ func (s *AclService) CheckRole(ctx context.Context, roleID string) error {
 	}
 	banned, err := s.IsRoleBanned(ctx, roleID)
 	if err != nil {
-		recordAclCheck("role", "error")
 		return err
 	}
 	if banned {
-		recordAclCheck("role", "block")
 		return ErrRoleBanned
 	}
-	recordAclCheck("role", "pass")
 	return nil
 }
 
@@ -359,7 +351,6 @@ func (s *AclService) apply(mutate func(*aclData)) {
 	}
 	mutate(next)
 	s.snap.Store(next)
-	updateAclSnapshotGauges(next)
 }
 
 // applyWhiteIP 白名单增删落地到本地快照（id 为规范化后的纯 IP 或 CIDR）
@@ -415,7 +406,6 @@ func (s *AclService) reload(ctx context.Context) error {
 		d.roles[row.RoleID] = struct{}{}
 	}
 	s.snap.Store(d)
-	updateAclSnapshotGauges(d)
 	return nil
 }
 

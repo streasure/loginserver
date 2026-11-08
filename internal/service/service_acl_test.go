@@ -59,7 +59,6 @@ func loadTestData(svc *AclService, store *fakeAclStore) {
 		d.roles[row.RoleID] = struct{}{}
 	}
 	svc.snap.Store(d)
-	updateAclSnapshotGauges(d)
 }
 
 // 读路径语义：白名单放行（跳过黑名单），黑名单拦截，封禁角色拦截
